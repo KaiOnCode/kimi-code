@@ -43,6 +43,8 @@ The following combinations are rejected at startup:
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
 - `--output-format` can only be used together with `--prompt`
 
+Non-interactive mode never runs in Plan mode, because a plan waits for your review: `default_plan_mode` is not applied, and resuming a session that is in Plan mode is refused.
+
 When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to Never Ask mode.
 
 ## Common Usage

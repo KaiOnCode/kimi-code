@@ -21,7 +21,7 @@ const OPTIONS: readonly StartPermissionOption<SwarmStartPermissionChoice>[] = [
     value: 'yolo',
     label: 'Switch to Ask When Needed and start',
     description:
-      'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
+      'Tools are approved automatically. Kimi Code may still ask you questions.',
   },
   {
     value: 'manual',

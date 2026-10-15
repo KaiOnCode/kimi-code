@@ -8,7 +8,6 @@ import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -58,7 +57,6 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -95,7 +93,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     const plan = await this.status();
 
     if (toolName === 'ExitPlanMode') {
-      if (plan !== null && this.modeService.mode !== 'auto') {
+      if (plan !== null) {
         event.waitUntil(() => this.review.requestApproval(event));
       }
       return;

@@ -247,7 +247,7 @@ describe('approval adapter', () => {
         response: 'approved',
         selected_label: 'yolo',
         description:
-          'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
+          'Tools are approved automatically. Kimi Code may still ask you questions.',
       },
       {
         label: 'Start in Always Ask',
@@ -291,7 +291,7 @@ describe('approval adapter', () => {
         response: 'approved',
         selected_label: 'yolo',
         description:
-          'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
+          'Tools stay approved automatically. Kimi Code may still ask you questions.',
       },
       {
         label: 'Do not start',

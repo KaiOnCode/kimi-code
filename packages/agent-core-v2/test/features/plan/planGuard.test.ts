@@ -492,17 +492,38 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(await svc.status()).not.toBeNull();
     });
 
-    it('skips the review in auto mode', async () => {
+    it('reviews the plan in auto mode as well', async () => {
       mode = 'auto';
-      await enterPlan();
+      const svc = await enterPlan();
       const decision = await run(
         hookContext('ExitPlanMode', { display: planReviewDisplay() }),
       );
 
-      expect(requests).toHaveLength(0);
-      expect(records).toEqual([]);
-      expect(decision).toBeUndefined();
-      expect(permissionRan).toBe(true);
+      expect(requests).toHaveLength(1);
+      expect(decision?.veto?.isError).toBe(false);
+      expect(decision?.veto?.output).toContain('## Approved Plan:\n# Plan');
+      expect(records).toContainEqual({
+        event: 'plan_submitted',
+        properties: { has_options: false, mode: 'plan' },
+      });
+      expect(records).toContainEqual({
+        event: 'plan_resolved',
+        properties: { outcome: 'approved', mode: 'agent' },
+      });
+      expect(await svc.status()).toBeNull();
+    });
+
+    it('keeps plan mode active in auto mode until the user decides', async () => {
+      mode = 'auto';
+      const svc = await enterPlan();
+      approvalResponse = { decision: 'cancelled' };
+      const decision = await run(
+        hookContext('ExitPlanMode', { display: planReviewDisplay() }),
+      );
+
+      expect(requests).toHaveLength(1);
+      expect(decision?.veto?.output).toBe('Plan approval dismissed. Plan mode remains active.');
+      expect(await svc.status()).not.toBeNull();
     });
 
     it('skips the review when no plan is active', async () => {
