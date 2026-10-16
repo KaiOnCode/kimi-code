@@ -642,7 +642,7 @@ describe('runV2Print', () => {
     expect(stderr.text()).not.toContain('default_plan_mode');
   });
 
-  it('runs a resumed session that is still in Plan mode and says the run can only update the plan', async () => {
+  it('runs a resumed session that is still in Plan mode and says its plan cannot be approved', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, agentServices, appServices, planState } = makeFakeHarness();
@@ -657,7 +657,7 @@ describe('runV2Print', () => {
     await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr });
 
     expect(stderr.text()).toContain(
-      'Session "ses_1" is in Plan mode, so this run can only update the plan; review it with `kimi -r ses_1`.',
+      'Session "ses_1" is in Plan mode, and its plan cannot be approved in print mode; review it with `kimi -r ses_1`.',
     );
     const plan = agentServices.get(IAgentPlanService) as { cancel: ReturnType<typeof vi.fn> };
     expect(plan.cancel).not.toHaveBeenCalled();
@@ -670,7 +670,7 @@ describe('runV2Print', () => {
     expect(loop.submit).toHaveBeenCalledTimes(1);
   });
 
-  it('continues the previous session that is still in Plan mode and says the run can only update the plan', async () => {
+  it('continues the previous session that is still in Plan mode and says its plan cannot be approved', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, agentServices, appServices, planState } = makeFakeHarness();
@@ -684,7 +684,7 @@ describe('runV2Print', () => {
 
     await runV2Print(opts({ continue: true }) as never, '1.2.3-test', { stdout, stderr });
 
-    expect(stderr.text()).toContain('Session "ses_9" is in Plan mode, so this run can only update the plan');
+    expect(stderr.text()).toContain('Session "ses_9" is in Plan mode, and its plan cannot be approved in print mode');
     expect(planState.active).toBe(true);
     const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
     expect(loop.submit).toHaveBeenCalledTimes(1);

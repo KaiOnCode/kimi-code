@@ -406,12 +406,12 @@ async function resolveNativeSession(
   };
 
   // Plan mode waits for the user to review the plan, and nobody can review it
-  // in print mode: a resumed session still in Plan mode runs read-only and only
-  // updates its plan, which stays in the session for the user to review.
+  // in print mode: a resumed session still in Plan mode keeps running in Plan
+  // mode, and its plan stays unapproved until the user reviews it.
   const notePlanMode = async (agent: IAgentScopeHandle, sessionId: string): Promise<void> => {
     if ((await agent.accessor.get(IAgentPlanService).status()) === null) return;
     stderr.write(
-      `Session "${sessionId}" is in Plan mode, so this run can only update the plan; ` +
+      `Session "${sessionId}" is in Plan mode, and its plan cannot be approved in print mode; ` +
         `review it with \`kimi -r ${sessionId}\`.\n`,
     );
   };
