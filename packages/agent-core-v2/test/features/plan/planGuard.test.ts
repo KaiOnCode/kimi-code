@@ -111,8 +111,11 @@ function mapResolution(
   resolution: PermissionPolicyResolution | undefined,
 ): BeforeExecuteDecision | undefined {
   if (resolution === undefined) return undefined;
+  if (resolution.kind === 'deny') {
+    return { veto: { output: resolution.message ?? '', isError: true } };
+  }
   if (resolution.kind !== 'result') {
-    throw new Error('the review stub only resolves synthetic results');
+    throw new Error('the review stub only resolves synthetic results and denials');
   }
   return { veto: resolution.result };
 }
@@ -129,12 +132,14 @@ describe('AgentPlanService plan-guard listener', () => {
   let formatDenyMessage: Mock<(message: string) => string>;
   let mode: PermissionMode;
   let files: Map<string, string>;
+  let nonInteractive: boolean;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     records = [];
     requests = [];
     approvalResponse = { decision: 'approved' };
+    nonInteractive = false;
     formatDenyMessage = vi.fn((message: string) => message);
     mode = 'manual';
     files = new Map();
@@ -149,6 +154,7 @@ describe('AgentPlanService plan-guard listener', () => {
       },
       requestToolApproval: async (_context, ask, origin) => {
         requests.push({ ask, origin });
+        if (nonInteractive) return mapResolution(ask.resolveNonInteractive?.());
         return mapResolution(ask.resolveApproval?.(approvalResponse));
       },
       formatDenyMessage: (message: string) => formatDenyMessage(message),
@@ -524,6 +530,25 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(requests).toHaveLength(1);
       expect(decision?.veto?.output).toBe('Plan approval dismissed. Plan mode remains active.');
       expect(await svc.status()).not.toBeNull();
+    });
+
+    it('keeps plan mode active and stops retries when nobody can review the plan', async () => {
+      nonInteractive = true;
+      mode = 'auto';
+      const svc = await enterPlan();
+      const decision = await run(
+        hookContext('ExitPlanMode', { display: planReviewDisplay() }),
+      );
+
+      expect(requests).toHaveLength(1);
+      expect(decision?.veto).toEqual({
+        isError: true,
+        output:
+          'Nobody can review this plan in a non-interactive run, so plan mode is still active and you cannot edit files. ' +
+          'Do not call ExitPlanMode again; report your plan and this limitation in your final message.',
+      });
+      expect(await svc.status()).not.toBeNull();
+      expect(records.some((record) => record.event === 'plan_resolved')).toBe(false);
     });
 
     it('skips the review when no plan is active', async () => {

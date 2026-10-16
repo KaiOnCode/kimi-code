@@ -414,6 +414,20 @@ describe('runV2Print', () => {
     expect(input.args?.skillDirs ?? []).toEqual([]);
   });
 
+  it('declares the host non-interactive so no approval or question waits for a person', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const input = mocks.bootstrap.mock.calls[0]?.[0] as BootstrapInput;
+    expect(input.args?.nonInteractive).toBe(true);
+  });
+
   it('seeds explicit agent files from --agentFile and binds the --agent profile', async () => {
     const stdout = writer();
     const stderr = writer();

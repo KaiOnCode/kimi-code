@@ -405,9 +405,9 @@ async function resolveNativeSession(
     return session;
   };
 
-  // Plan mode waits for the user to review the plan, and print mode has nobody
-  // to answer that review, so a resumed session still in Plan mode is refused
-  // instead of hanging on the review.
+  // Plan mode waits for the user to review the plan, and nobody can review it
+  // in print mode, so a resumed session still in Plan mode is refused up front
+  // instead of spending the run on a plan that can never be approved.
   const refusePlanMode = async (agent: IAgentScopeHandle, sessionId: string): Promise<void> => {
     if ((await agent.accessor.get(IAgentPlanService).status()) === null) return;
     throw new Error(
