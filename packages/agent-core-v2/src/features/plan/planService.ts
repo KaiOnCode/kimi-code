@@ -22,6 +22,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -156,6 +157,12 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   async enter(id = this.createPlanId(), createFile = false): Promise<void> {
+    if (this.agentCtx.agentId !== MAIN_AGENT_ID) {
+      throw new Error2(
+        ErrorCodes.SESSION_PLAN_MODE_INVALID,
+        'Plan mode is only available to the main agent',
+      );
+    }
     if (this.isActive) {
       throw new Error2(ErrorCodes.SESSION_PLAN_MODE_INVALID, 'Already in plan mode');
     }

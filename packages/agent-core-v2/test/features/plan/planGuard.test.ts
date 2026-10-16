@@ -25,6 +25,8 @@ import type {
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ToolCall } from '#human/llm/message';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ToolAccesses } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -38,7 +40,7 @@ import { stubToolExecutorEvents, type ToolExecutorEventStubs } from '../../agent
 const signal = new AbortController().signal;
 const SESSION_DIR = '/session';
 const PLAN_ID = 'plan-1';
-const PLAN_PATH = `${SESSION_DIR}/agents/test-agent/plans/${PLAN_ID}.md`;
+const PLAN_PATH = `${SESSION_DIR}/agents/${MAIN_AGENT_ID}/plans/${PLAN_ID}.md`;
 
 const options = [
   { label: 'Approach A', description: 'Small change.' },
@@ -164,7 +166,7 @@ describe('AgentPlanService plan-guard listener', () => {
 
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        registerTestAgentWireServices(reg);
+        registerTestAgentWireServices(reg, 'wire/main', MAIN_AGENT_ID);
         reg.defineInstance(
           IHostFileSystem,
           createFakeHostFs({
@@ -216,6 +218,34 @@ describe('AgentPlanService plan-guard listener', () => {
     }
     return executorEvents.fireBeforeExecute(ctx);
   }
+
+  describe('subagents', () => {
+    it('refuses plan mode for a subagent and leaves its tools unguarded', async () => {
+      ix.set(
+        IAgentScopeContext,
+        makeAgentScopeContext({ agentId: 'agent-0', agentScope: 'wire/agent-0' }),
+      );
+      const svc = plan();
+
+      await expect(svc.enter(PLAN_ID)).rejects.toThrow(
+        'Plan mode is only available to the main agent',
+      );
+      expect(await svc.status()).toBeNull();
+
+      const write = await run(
+        hookContext('Write', {
+          args: { path: '/workspace/src/main.ts' },
+          accesses: ToolAccesses.writeFile('/workspace/src/main.ts'),
+        }),
+      );
+      expect(write).toBeUndefined();
+      expect(permissionRan).toBe(true);
+
+      const exit = await run(hookContext('ExitPlanMode', { display: planReviewDisplay() }));
+      expect(exit).toBeUndefined();
+      expect(requests).toEqual([]);
+    });
+  });
 
   describe('guard', () => {
     it.each(['Write', 'Edit'] as const)(
