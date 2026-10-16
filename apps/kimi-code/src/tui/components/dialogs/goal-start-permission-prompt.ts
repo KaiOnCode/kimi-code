@@ -16,7 +16,7 @@ export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption[] = [
     value: 'auto',
     label: 'Switch to Never Ask and start',
     description:
-      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
   },
   {
     value: 'yolo',
@@ -42,7 +42,7 @@ export const GOAL_START_YOLO_OPTIONS: readonly StartPermissionOption[] = [
     value: 'auto',
     label: 'Switch to Never Ask and start',
     description:
-      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
   },
   {
     value: 'yolo',

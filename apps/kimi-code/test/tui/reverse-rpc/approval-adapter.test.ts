@@ -240,7 +240,7 @@ describe('approval adapter', () => {
         response: 'approved',
         selected_label: 'auto',
         description:
-          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
       },
       {
         label: 'Switch to Ask When Needed and start',
@@ -284,7 +284,7 @@ describe('approval adapter', () => {
         response: 'approved',
         selected_label: 'auto',
         description:
-          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+          'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
       },
       {
         label: 'Keep Ask When Needed and start',

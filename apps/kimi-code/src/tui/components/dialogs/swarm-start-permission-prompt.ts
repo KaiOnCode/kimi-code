@@ -15,7 +15,7 @@ const OPTIONS: readonly StartPermissionOption<SwarmStartPermissionChoice>[] = [
     value: 'auto',
     label: 'Switch to Never Ask and start',
     description:
-      'Best for swarm tasks. Tools are approved automatically, and questions are skipped.',
+      'Best for swarm tasks. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
   },
   {
     value: 'yolo',
