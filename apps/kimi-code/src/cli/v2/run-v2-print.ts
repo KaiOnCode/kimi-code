@@ -406,13 +406,13 @@ async function resolveNativeSession(
   };
 
   // Plan mode waits for the user to review the plan, and nobody can review it
-  // in print mode, so a resumed session still in Plan mode is refused up front
-  // instead of spending the run on a plan that can never be approved.
-  const refusePlanMode = async (agent: IAgentScopeHandle, sessionId: string): Promise<void> => {
+  // in print mode: a resumed session still in Plan mode runs read-only and only
+  // updates its plan, which stays in the session for the user to review.
+  const notePlanMode = async (agent: IAgentScopeHandle, sessionId: string): Promise<void> => {
     if ((await agent.accessor.get(IAgentPlanService).status()) === null) return;
-    throw new Error(
-      `Session "${sessionId}" is in Plan mode, which waits for your review and cannot run in print mode. ` +
-        `Resume it with \`kimi -r ${sessionId}\` and turn Plan mode off (Shift-Tab or /plan off) first.`,
+    stderr.write(
+      `Session "${sessionId}" is in Plan mode, so this run can only update the plan; ` +
+        `review it with \`kimi -r ${sessionId}\`.\n`,
     );
   };
 
@@ -444,7 +444,7 @@ async function resolveNativeSession(
     const session = await resumeById(opts.session);
     const agentContext = await ensureMainAgent(session);
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
-    await refusePlanMode(agent, opts.session);
+    await notePlanMode(agent, opts.session);
     const profile = agent.accessor.get(IAgentProfileService);
     await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
@@ -465,7 +465,7 @@ async function resolveNativeSession(
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);
       const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
-      await refusePlanMode(agent, previous.id);
+      await notePlanMode(agent, previous.id);
       const profile = agent.accessor.get(IAgentProfileService);
       await applyModelOverride(profile, opts.model);
       const currentModel = profile.getModel();

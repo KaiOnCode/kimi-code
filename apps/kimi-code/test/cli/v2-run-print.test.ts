@@ -642,7 +642,7 @@ describe('runV2Print', () => {
     expect(stderr.text()).not.toContain('default_plan_mode');
   });
 
-  it('refuses to resume a session that is still in Plan mode', async () => {
+  it('runs a resumed session that is still in Plan mode and says the run can only update the plan', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, agentServices, appServices, planState } = makeFakeHarness();
@@ -654,22 +654,23 @@ describe('runV2Print', () => {
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
-    await expect(
-      runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr }),
-    ).rejects.toThrow('Session "ses_1" is in Plan mode');
+    await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr });
 
+    expect(stderr.text()).toContain(
+      'Session "ses_1" is in Plan mode, so this run can only update the plan; review it with `kimi -r ses_1`.',
+    );
     const plan = agentServices.get(IAgentPlanService) as { cancel: ReturnType<typeof vi.fn> };
     expect(plan.cancel).not.toHaveBeenCalled();
     expect(planState.active).toBe(true);
     const permission = agentServices.get(IAgentPermissionModeService) as {
       setMode: ReturnType<typeof vi.fn>;
     };
-    expect(permission.setMode).not.toHaveBeenCalled();
+    expect(permission.setMode).toHaveBeenCalledWith('auto');
     const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
-    expect(loop.submit).not.toHaveBeenCalled();
+    expect(loop.submit).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses to continue the previous session when it is still in Plan mode', async () => {
+  it('continues the previous session that is still in Plan mode and says the run can only update the plan', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, agentServices, appServices, planState } = makeFakeHarness();
@@ -681,12 +682,30 @@ describe('runV2Print', () => {
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
-    await expect(
-      runV2Print(opts({ continue: true }) as never, '1.2.3-test', { stdout, stderr }),
-    ).rejects.toThrow('Session "ses_9" is in Plan mode');
+    await runV2Print(opts({ continue: true }) as never, '1.2.3-test', { stdout, stderr });
 
+    expect(stderr.text()).toContain('Session "ses_9" is in Plan mode, so this run can only update the plan');
+    expect(planState.active).toBe(true);
     const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
-    expect(loop.submit).not.toHaveBeenCalled();
+    expect(loop.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('says nothing about Plan mode when the resumed session is not in Plan mode', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices, appServices } = makeFakeHarness();
+
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts({ session: 'ses_1' }) as never, '1.2.3-test', { stdout, stderr });
+
+    expect(stderr.text()).not.toContain('Plan mode');
+    const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
+    expect(loop.submit).toHaveBeenCalledTimes(1);
   });
 
   it('honors KIMI_DISABLE_TELEMETRY: no cloud appender and no v1 pipeline', async () => {

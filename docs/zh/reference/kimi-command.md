@@ -43,7 +43,7 @@ kimi <subcommand> [options]
 - `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
 
-非交互模式不会在 Plan 模式下运行，因为计划需要你审阅：`default_plan_mode` 不生效，恢复处于 Plan 模式的会话会被拒绝。
+非交互模式下没人能审阅计划，所以新会话不应用 `default_plan_mode`。恢复已经处于 Plan 模式的会话时照常运行，但会话仍在 Plan 模式中：这次运行只能更新计划，计划会等你下次用 `kimi -r` 打开会话时审阅。
 
 恢复会话时，可以通过 `--auto`、`--yolo` 或 `--plan` 覆盖原会话保存的权限或计划模式。例如，`kimi --continue --auto` 会恢复最近会话并切换到 "Never Ask" 模式。
 
