@@ -3,9 +3,15 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { Error2, ErrorCodes } from '#/errors';
+import { Error2, ErrorCodes, isError2, SessionErrors } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { IAgentCronService } from '#/features/cron/cronService';
+import { IAgentGoalService } from '#/features/goal/goalService';
+import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
+import { ISessionTerminalService } from '#/session/terminal/terminalService';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -37,6 +43,7 @@ export class SessionManager implements ISessionManager {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly owners = new Map<string, SessionLifecycleService>();
+  private readonly lastUsed = new Map<string, number>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly resumeFailures = new Map<string, Error>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
@@ -60,6 +67,7 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
@@ -77,9 +85,11 @@ export class SessionManager implements ISessionManager {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
-    const promise = this.serializeLifecycle(sessionId, async () =>
-      (await this.controllerForSession(sessionId))?.resume(sessionId, options),
-    ).finally(() => this.pendingResumes.delete(sessionId));
+    const promise = this.serializeLifecycle(sessionId, async () => {
+      const handle = await (await this.controllerForSession(sessionId))?.resume(sessionId, options);
+      if (handle !== undefined) this.lastUsed.set(sessionId, Date.now());
+      return handle;
+    }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
       this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
@@ -123,7 +133,7 @@ export class SessionManager implements ISessionManager {
   }
 
   private lifecycleKeys(...ids: (string | undefined)[]): string[] {
-    return [...new Set(ids.filter((id): id is string => id !== undefined))].sort();
+    return [...new Set(ids.filter((id): id is string => id !== undefined))].toSorted();
   }
 
   withLifecycleSerialization<T>(
@@ -144,6 +154,53 @@ export class SessionManager implements ISessionManager {
 
   async close(sessionId: string): Promise<void> {
     await this.serializeLifecycle(sessionId, async () => this.owners.get(sessionId)?.close(sessionId));
+  }
+
+  async closeIfIdle(sessionId: string, idleTimeoutMs: number): Promise<boolean> {
+    return this.serializeLifecycle(sessionId, async () => {
+      const handle = this.sessions.get(sessionId);
+      if (handle === undefined || !this.idleFor(sessionId, idleTimeoutMs)) return false;
+      if (!(await this.reclaimable(handle))) return false;
+      let lease: SessionLockLease;
+      try {
+        lease = this.sessionLocks.lease(sessionId);
+      } catch (error) {
+        if (isError2(error) && error.code === SessionErrors.codes.SESSION_OCCUPIED) return false;
+        throw error;
+      }
+      try {
+        const owner = this.owners.get(sessionId);
+        if (this.sessions.get(sessionId) !== handle || owner === undefined) return false;
+        if (!this.idleFor(sessionId, idleTimeoutMs)) return false;
+        if (!(await this.reclaimable(handle))) return false;
+        await owner.close(sessionId);
+        return true;
+      } finally {
+        lease.release();
+      }
+    });
+  }
+
+  private idleFor(sessionId: string, idleTimeoutMs: number): boolean {
+    const used = this.lastUsed.get(sessionId);
+    return used !== undefined && Date.now() - used >= idleTimeoutMs;
+  }
+
+  private async reclaimable(handle: ISessionScopeHandle): Promise<boolean> {
+    const activity = handle.accessor.get(ISessionActivityView).state();
+    if (activity.busy || activity.pendingInteraction !== 'none') return false;
+    const terminals = await handle.accessor.get(ISessionTerminalService).list();
+    if (terminals.some((terminal) => terminal.status === 'running')) return false;
+    const agents = handle.accessor.get(IAgentLifecycleService);
+    for (const agent of agents.list()) {
+      const agentHandle = agents.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
+      const cron = agentHandle.accessor.get(IAgentCronService) as IAgentCronService | undefined;
+      if (cron !== undefined && cron.list().length > 0) return false;
+      const goals = agentHandle.accessor.get(IAgentGoalService) as IAgentGoalService | undefined;
+      if (goals?.getGoal().goal?.status === 'active') return false;
+    }
+    return true;
   }
 
   private async archiveInner(sessionId: string): Promise<void> {
@@ -222,7 +279,7 @@ export class SessionManager implements ISessionManager {
   }
 
   dispose(): void {
-    for (const { controller, subscriptions } of [...this.controllerEntries].reverse()) {
+    for (const { controller, subscriptions } of [...this.controllerEntries].toReversed()) {
       subscriptions.dispose();
       controller.dispose();
     }
@@ -230,6 +287,7 @@ export class SessionManager implements ISessionManager {
     this.controllers.clear();
     this.sessions.clear();
     this.owners.clear();
+    this.lastUsed.clear();
     this.willCreateEmitter.dispose();
     this.didCreateEmitter.dispose();
     this.willCloseEmitter.dispose();
@@ -253,6 +311,7 @@ export class SessionManager implements ISessionManager {
       entry.sessionCount += 1;
       this.sessions.set(event.sessionId, event.handle);
       this.owners.set(event.sessionId, controller);
+      this.lastUsed.set(event.sessionId, Date.now());
       this.didCreateEmitter.fire(event);
     }));
     subscriptions.add(controller.onWillCloseSession((event) => this.willCloseEmitter.fire(event)));
@@ -260,6 +319,7 @@ export class SessionManager implements ISessionManager {
       entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
+      this.lastUsed.delete(event.sessionId);
       this.didCloseEmitter.fire(event);
       this.retireEntryIfIdle(workspaceId, entry);
     }));
@@ -267,6 +327,7 @@ export class SessionManager implements ISessionManager {
       entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
+      this.lastUsed.delete(event.sessionId);
       this.didArchiveEmitter.fire(event);
       this.retireEntryIfIdle(workspaceId, entry);
     }));
