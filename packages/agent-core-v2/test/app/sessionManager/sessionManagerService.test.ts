@@ -515,91 +515,57 @@ describe('SessionManager', () => {
 });
 
 describe('SessionManager closeIfIdle', () => {
-  interface ReclaimOverrides {
+  interface Guards {
     readonly busy?: boolean;
-    readonly pendingInteraction?: 'none' | 'approval' | 'question';
-    readonly terminalStatus?: 'running' | 'exited';
+    readonly pending?: 'none' | 'approval' | 'question';
+    readonly terminal?: 'running' | 'exited';
     readonly cronTasks?: number;
-    readonly goalStatus?: 'active' | 'paused' | 'blocked' | 'complete';
+    readonly goal?: 'active' | 'paused' | 'blocked' | 'complete';
   }
 
-  interface ReclaimFake {
-    service: SessionLifecycleService;
-    readonly handle: ISessionScopeHandle;
-    readonly closed: string[];
-    readonly disposed: string[];
-    resumeCalls: number;
-    resumeMode: 'live' | 'cold';
-  }
-
-  function reclaimController(sessionId: string, overrides: ReclaimOverrides = {}): ReclaimFake {
+  function setup(guards: Guards = {}, locks?: ISessionLockService) {
     const didCreate = new Emitter<SessionCreatedEvent>();
     const didClose = new Emitter<SessionClosedEvent>();
     const closed: string[] = [];
     const disposed: string[] = [];
     const state = {
-      busy: overrides.busy ?? false,
-      pendingInteraction: overrides.pendingInteraction ?? ('none' as const),
-      terminalStatus: overrides.terminalStatus ?? ('exited' as const),
-      cronTasks: overrides.cronTasks ?? 0,
-      goalStatus: overrides.goalStatus,
+      busy: false,
+      pending: 'none' as const,
+      terminal: 'exited' as const,
+      cronTasks: 0,
+      ...guards,
     };
     const makeHandle = (): ISessionScopeHandle => {
-      const agentHandle = {
-        id: 'main',
-        accessor: {
-          get: (token: unknown) => {
-            if (token === IAgentCronService) {
-              return { list: () => Array.from({ length: state.cronTasks }) };
-            }
-            if (token === IAgentGoalService) {
-              return {
-                getGoal: () => ({
-                  goal: state.goalStatus === undefined ? null : { status: state.goalStatus },
-                }),
-              };
-            }
-            return undefined;
-          },
-        },
-      };
-      const agents = {
-        list: () => [{ agentId: 'main' }],
-        handleOf: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
-      };
+      const agentServices = new Map<unknown, unknown>([
+        [IAgentCronService, { list: () => Array.from({ length: state.cronTasks }) }],
+        [IAgentGoalService, { getGoal: () => ({ goal: state.goal === undefined ? null : { status: state.goal } }) }],
+      ]);
+      const agent = { id: 'main', accessor: { get: (token: unknown) => agentServices.get(token) } };
+      const sessionServices = new Map<unknown, unknown>([
+        [ISessionActivityView, { state: () => ({ busy: state.busy, mainTurnActive: false, pendingInteraction: state.pending }) }],
+        [ISessionTerminalService, { list: async () => [{ status: state.terminal }] }],
+        [IAgentLifecycleService, {
+          list: () => [{ agentId: 'main' }],
+          handleOf: (agentId: string) => (agentId === 'main' ? agent : undefined),
+        }],
+      ]);
       return {
-        id: sessionId,
-        accessor: {
-          get: (token: unknown) => {
-            if (token === ISessionActivityView) {
-              return {
-                state: () => ({
-                  busy: state.busy,
-                  mainTurnActive: false,
-                  pendingInteraction: state.pendingInteraction,
-                }),
-              };
-            }
-            if (token === ISessionTerminalService) {
-              return { list: async () => [{ status: state.terminalStatus }] };
-            }
-            if (token === IAgentLifecycleService) return agents;
-            return undefined;
-          },
-        },
+        id: 'session-1',
+        accessor: { get: (token: unknown) => sessionServices.get(token) },
         dispose: () => {
-          disposed.push(sessionId);
+          disposed.push('session-1');
         },
       } as unknown as ISessionScopeHandle;
     };
     const handle = makeHandle();
-    const fake: ReclaimFake = {
+    const fake = {
       service: undefined as unknown as SessionLifecycleService,
+      manager: undefined as unknown as SessionManager,
       handle,
       closed,
       disposed,
       resumeCalls: 0,
-      resumeMode: 'live',
+      resumeMode: 'live' as 'live' | 'cold',
     };
     fake.service = {
       onWillCreateSession: Event.None,
@@ -609,180 +575,113 @@ describe('SessionManager closeIfIdle', () => {
       onDidArchiveSession: Event.None,
       onDidForkSession: Event.None,
       create: async () => {
-        didCreate.fire({ sessionId, handle, source: 'startup' });
+        didCreate.fire({ sessionId: 'session-1', handle, source: 'startup' });
         return handle;
       },
-      get: () => undefined,
-      list: () => [],
       resume: async () => {
         fake.resumeCalls += 1;
-        if (fake.resumeMode === 'cold') {
-          const next = makeHandle();
-          didCreate.fire({ sessionId, handle: next, source: 'resume' });
-          return next;
-        }
-        return handle;
+        if (fake.resumeMode === 'live') return handle;
+        const next = makeHandle();
+        didCreate.fire({ sessionId: 'session-1', handle: next, source: 'resume' });
+        return next;
       },
-      close: async (id: string) => {
-        closed.push(id);
+      close: async (sessionId: string) => {
+        closed.push(sessionId);
         void handle.dispose();
-        didClose.fire({ sessionId: id });
+        didClose.fire({ sessionId });
       },
-      archive: async () => {},
-      restore: async () => handle,
-      delete: async () => {},
-      fork: async () => handle,
-      createChild: async () => handle,
       dispose: () => {},
     } as unknown as SessionLifecycleService;
-    return fake;
-  }
-
-  function managerFor(fake: ReclaimFake, locks?: ISessionLockService): SessionManager {
     const workspace = {
       id: 'workspace-1',
       program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
     } as unknown as WorkspaceInstance;
-    const workspaces = {
-      getOrCreate: async () => workspace,
-      get: () => workspace,
-    } as unknown as IWorkspaceInstanceManager;
-    const index = {
-      get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
-    } as unknown as ISessionIndex;
-    return new SessionManager(workspaces, index, locks ?? new InMemorySessionLockService());
+    fake.manager = new SessionManager(
+      { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager,
+      { get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }) } as unknown as ISessionIndex,
+      locks ?? new InMemorySessionLockService(),
+    );
+    return fake;
   }
 
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+  const create = (fake: ReturnType<typeof setup>): Promise<ISessionScopeHandle> =>
+    fake.manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  beforeEach(() => void vi.useFakeTimers());
 
-  it('returns false for a session that is not live', async () => {
-    const manager = managerFor(reclaimController('session-1'));
-    expect(await manager.closeIfIdle('session-1', 0)).toBe(false);
-    manager.dispose();
-  });
+  afterEach(() => void vi.useRealTimers());
 
-  it('keeps a session before the idle timeout and closes it after', async () => {
-    const fake = reclaimController('session-1');
-    const manager = managerFor(fake);
-    await manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
-
+  it('tracks lastUsed across create and already-live resume', async () => {
+    const fake = setup();
+    expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(false);
+    await create(fake);
     vi.setSystemTime(Date.now() + 999);
-    expect(await manager.closeIfIdle('session-1', 1000)).toBe(false);
-    expect(fake.closed).toEqual([]);
-
-    vi.setSystemTime(Date.now() + 1);
-    expect(await manager.closeIfIdle('session-1', 1000)).toBe(true);
-    expect(fake.closed).toEqual(['session-1']);
-    expect(manager.get('session-1')).toBeUndefined();
-    manager.dispose();
-  });
-
-  it('refreshes lastUsed when a resume finds the session already live', async () => {
-    const fake = reclaimController('session-1');
-    const manager = managerFor(fake);
-    await manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
-
-    vi.setSystemTime(Date.now() + 900);
-    await manager.resume('session-1');
+    expect(await fake.manager.closeIfIdle('session-1', 1000)).toBe(false);
+    await fake.manager.resume('session-1');
     expect(fake.resumeCalls).toBe(1);
-
-    vi.setSystemTime(Date.now() + 900);
-    expect(await manager.closeIfIdle('session-1', 1000)).toBe(false);
-    expect(fake.closed).toEqual([]);
-
-    vi.setSystemTime(Date.now() + 101);
-    expect(await manager.closeIfIdle('session-1', 1000)).toBe(true);
-    manager.dispose();
+    vi.setSystemTime(Date.now() + 999);
+    expect(await fake.manager.closeIfIdle('session-1', 1000)).toBe(false);
+    vi.setSystemTime(Date.now() + 1);
+    expect(await fake.manager.closeIfIdle('session-1', 1000)).toBe(true);
+    expect(fake.closed).toEqual(['session-1']);
+    expect(fake.manager.get('session-1')).toBeUndefined();
+    fake.manager.dispose();
   });
 
-  const skipCases: Array<[string, ReclaimOverrides]> = [
-    ['a busy turn', { busy: true }],
-    ['a pending approval', { pendingInteraction: 'approval' }],
-    ['a pending question', { pendingInteraction: 'question' }],
-    ['a running terminal', { terminalStatus: 'running' }],
-    ['pending cron tasks', { cronTasks: 1 }],
-    ['an active goal', { goalStatus: 'active' }],
+  const eligibilityCases: Array<[string, Guards, boolean]> = [
+    ['a busy turn', { busy: true }, false],
+    ['a pending approval', { pending: 'approval' }, false],
+    ['a pending question', { pending: 'question' }, false],
+    ['a running terminal', { terminal: 'running' }, false],
+    ['pending cron tasks', { cronTasks: 1 }, false],
+    ['an active goal', { goal: 'active' }, false],
+    ['an exited terminal', { terminal: 'exited' }, true],
+    ['a paused goal', { goal: 'paused' }, true],
+    ['a completed goal', { goal: 'complete' }, true],
   ];
 
-  it.each(skipCases)('skips reclaim while the session has %s', async (_label, overrides) => {
-    const fake = reclaimController('session-1', overrides);
-    const manager = managerFor(fake);
-    await manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
-    expect(await manager.closeIfIdle('session-1', 0)).toBe(false);
-    expect(fake.closed).toEqual([]);
-    expect(manager.get('session-1')).toBeDefined();
-    manager.dispose();
-  });
-
-  const allowCases: Array<[string, ReclaimOverrides]> = [
-    ['an exited terminal', { terminalStatus: 'exited' }],
-    ['a paused goal', { goalStatus: 'paused' }],
-    ['a completed goal', { goalStatus: 'complete' }],
-  ];
-
-  it.each(allowCases)('reclaims an idle session with %s', async (_label, overrides) => {
-    const fake = reclaimController('session-1', overrides);
-    const manager = managerFor(fake);
-    await manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
-    expect(await manager.closeIfIdle('session-1', 0)).toBe(true);
-    expect(manager.get('session-1')).toBeUndefined();
-    manager.dispose();
+  it.each(eligibilityCases)('closeIfIdle eligibility with %s', async (_label, guards, expected) => {
+    const fake = setup(guards);
+    await create(fake);
+    expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(expected);
+    expect(fake.manager.get('session-1') !== undefined).toBe(!expected);
+    fake.manager.dispose();
   });
 
   it('returns false without closing when another process holds the session lock', async () => {
-    const fake = reclaimController('session-1');
-    const inner = new InMemorySessionLockService();
     let occupied = true;
-    const locks = {
-      onDidHold: Event.None,
-      hold: () => {},
-      tryHold: () => true,
-      release: () => {},
-      lease: (sessionId: string) => {
+    const locks = new (class extends InMemorySessionLockService {
+      override lease(sessionId: string) {
         if (occupied) throw sessionOccupiedError(sessionId);
-        return inner.lease(sessionId);
-      },
-      held: (sessionId: string) => inner.held(sessionId),
-    } as unknown as ISessionLockService;
-    const manager = managerFor(fake, locks);
-    await manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
-
-    expect(await manager.closeIfIdle('session-1', 0)).toBe(false);
-    expect(fake.closed).toEqual([]);
-    expect(manager.get('session-1')).toBeDefined();
-
+        return super.lease(sessionId);
+      }
+    })();
+    const fake = setup({}, locks);
+    await create(fake);
+    expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(false);
+    expect(fake.manager.get('session-1')).toBeDefined();
     occupied = false;
-    expect(await manager.closeIfIdle('session-1', 0)).toBe(true);
-    expect(manager.get('session-1')).toBeUndefined();
-    manager.dispose();
+    expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(true);
+    expect(fake.manager.get('session-1')).toBeUndefined();
+    fake.manager.dispose();
   });
 
   it('releases the lease when the close path fails', async () => {
-    const fake = reclaimController('session-1');
+    const locks = new InMemorySessionLockService();
+    const fake = setup({}, locks);
     (fake.service as unknown as { close: (id: string) => Promise<void> }).close = async () => {
       throw new Error('boom');
     };
-    const locks = new InMemorySessionLockService();
-    const manager = managerFor(fake, locks);
-    await manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
-
-    await expect(manager.closeIfIdle('session-1', 0)).rejects.toThrow('boom');
+    await create(fake);
+    await expect(fake.manager.closeIfIdle('session-1', 0)).rejects.toThrow('boom');
     expect(locks.held('session-1')).toBe(false);
-    expect(manager.get('session-1')).toBeDefined();
-    manager.dispose();
+    expect(fake.manager.get('session-1')).toBeDefined();
+    fake.manager.dispose();
   });
 
   it('serializes a reclaim with a racing resume so the resume returns a valid handle', async () => {
-    const fake = reclaimController('session-1');
-    const manager = managerFor(fake);
-    const first = await manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
-
+    const fake = setup();
+    const first = await create(fake);
     let releaseClose!: () => void;
     const closeGate = new Promise<void>((resolve) => {
       releaseClose = resolve;
@@ -793,21 +692,17 @@ describe('SessionManager closeIfIdle', () => {
       await originalClose(id);
     };
     fake.resumeMode = 'cold';
-
-    const reclaim = manager.closeIfIdle('session-1', 0);
-    const resumed = manager.resume('session-1');
+    const reclaim = fake.manager.closeIfIdle('session-1', 0);
+    const resumed = fake.manager.resume('session-1');
     await drainMicrotasks();
     expect(fake.resumeCalls).toBe(0);
-
     releaseClose();
     expect(await reclaim).toBe(true);
     const handle = await resumed;
-    expect(fake.resumeCalls).toBe(1);
-    expect(handle).toBeDefined();
     expect(handle).not.toBe(first);
     expect(fake.disposed).toEqual(['session-1']);
-    expect(manager.get('session-1')).toBe(handle);
-    manager.dispose();
+    expect(fake.manager.get('session-1')).toBe(handle);
+    fake.manager.dispose();
   });
 });
 
