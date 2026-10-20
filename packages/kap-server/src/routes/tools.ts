@@ -4,7 +4,7 @@ import {
   ISessionIndex,
   IAgentToolRegistryService,
   IAgentToolPolicyService,
-  getLiveSessionById,
+  resumeSessionById,
   Error2,
   type Scope,
   type ToolInfo,
@@ -159,7 +159,7 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
 async function resolveEffectiveAgent(core: Scope, sessionId: string | undefined) {
   const sid = sessionId ?? (await mostRecentSessionId(core));
   if (sid === undefined) return undefined;
-  const session = getLiveSessionById(core.accessor, sid);
+  const session = await resumeSessionById(core.accessor, sid);
   if (session === undefined) return undefined;
   return ensureMainAgent(session);
 }
