@@ -243,6 +243,16 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       expect(body.code).toBe(0);
       expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([]);
     });
+
+    it('does not resume the most recent session when it is cold', async () => {
+      const id = await createSession();
+      await ensureMainAgent(id);
+      await closeSessionById(server!.core.accessor, id);
+      const { body } = await getJson<{ servers: unknown[] }>('/api/v1/mcp/servers');
+      expect(body.code).toBe(0);
+      expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([]);
+      expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
+    });
   });
 
   describe('POST /api/v1/mcp/servers/{id}:restart', () => {
