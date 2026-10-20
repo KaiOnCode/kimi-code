@@ -222,7 +222,15 @@ export class SessionEventBroadcaster {
     transcriptGrades?: TranscriptGradeSpec,
     opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
   ): Promise<boolean> {
-    await resumeSessionById(this.opts.core.accessor, sessionId);
+    try {
+      await resumeSessionById(this.opts.core.accessor, sessionId);
+    } catch (error) {
+      this.opts.logger?.warn(
+        { sessionId, err: error instanceof Error ? error.message : String(error) },
+        'session subscribe resume failed',
+      );
+      return false;
+    }
     const state = await this.ensureState(sessionId);
     if (state === undefined || this.sessions.get(sessionId) !== state) return false;
     const prev = state.targets.get(target);

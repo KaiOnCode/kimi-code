@@ -1328,6 +1328,19 @@ describe('SessionEventBroadcaster', () => {
     await vi.waitFor(() => expect(statesOf().has('s1')).toBe(false));
   });
 
+  it('returns false when cold resume fails', async () => {
+    const core = makeCore(sessions, eventBus);
+    const manager = core.accessor.get(ISessionManager) as {
+      resume: (sessionId: string) => Promise<unknown>;
+    };
+    manager.resume = async () => {
+      throw new Error('boom');
+    };
+    await bc.close();
+    bc = new SessionEventBroadcaster({ eventsDir: dir, core, maxBufferSize: 3 });
+    await expect(bc.subscribe('s1', collectingTarget().target)).resolves.toBe(false);
+  });
+
   it('subscribe returns false for an unknown session', async () => {
     const { target } = collectingTarget();
     expect(await bc.subscribe('nope', target)).toBe(false);
