@@ -48,6 +48,7 @@ export interface ModelRequestParams {
   readonly sampling?: SamplingOptions;
   readonly thinkingEffort?: ThinkingEffort;
   readonly thinkingKeep?: string;
+  readonly allowTruncatedThinkOnly?: boolean;
   readonly maxCompletionTokens?: number;
   readonly usedContextTokens?: number;
   readonly maxContextTokens?: number;

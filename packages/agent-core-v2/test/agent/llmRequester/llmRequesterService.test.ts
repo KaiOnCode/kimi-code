@@ -37,6 +37,7 @@ import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
 import type { Event2 } from '#/app/event/event2';
 import { IEventBus } from '#/app/event/eventBus';
 import {
@@ -67,6 +68,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import type { WireRecord } from '#/wire/record';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 import {
   recordingWireLog,
@@ -301,6 +303,7 @@ function createService(
   ix.stub(IAgentProfileService, profile);
   ix.stub(ISessionUsageService, usage);
   ix.stub(IConfigService, config);
+  ix.stub(IFlagService, stubFlag(false));
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
   ix.stub(IModelCatalog, {

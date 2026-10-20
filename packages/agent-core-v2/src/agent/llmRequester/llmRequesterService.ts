@@ -16,6 +16,8 @@ import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { OUTPUT_LIMIT_RECOVERY_FLAG_ID } from '#/agent/outputLimitRecovery/outputLimitRecovery';
 import {
   APIContextOverflowError,
   APIRequestTooLargeError,
@@ -170,6 +172,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @IConfigService private readonly config: IConfigService,
+    @IFlagService private readonly flags: IFlagService,
     @IModelService private readonly modelService: IModelService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ILogService private readonly log: ILogService,
@@ -738,6 +741,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       params: {
         ...baseParams,
         ...budgetParams,
+        allowTruncatedThinkOnly:
+          overrides.source?.type === 'turn' && this.flags.enabled(OUTPUT_LIMIT_RECOVERY_FLAG_ID)
+            ? true
+            : undefined,
         ...(usedContextTokens === undefined ? {} : { usedContextTokens }),
         ...(optedOut ? { maxCompletionTokens: maxCompletionTokensCap } : {}),
       },

@@ -76,6 +76,7 @@ export interface AfterStepContext extends BeforeStepContext {
   readonly usage: TokenUsage;
   readonly finishReason: FinishReason;
   stopTurn: boolean;
+  failTurn?: unknown;
 }
 
 export interface LoopErrorContext {

@@ -692,6 +692,8 @@ export * from '#/agent/loop/promptChannel';
 export * from '#/agent/interruptionReminder/interruptionReminder';
 export * from '#/agent/interruptionReminder/interruptionReminderService';
 export * from '#/agent/interruptionReminder/interruptionReminderOps';
+export * from '#/agent/outputLimitRecovery/outputLimitRecovery';
+export * from '#/agent/outputLimitRecovery/outputLimitRecoveryService';
 export * from '#/agent/mcp/mcp';
 export * from '#/agent/mcp/mcpService';
 export * from '#/agent/mcp/mcpDiscoveryOps';

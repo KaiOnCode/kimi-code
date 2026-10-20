@@ -615,6 +615,14 @@ export interface LlmRequestProjectionFallbackEvent {
   turn_id?: number;
 }
 
+export interface LlmOutputLimitRecoveryEvent {
+  turn_id: number;
+  step_no: number;
+  action: 'resumed' | 'nudged' | 'exhausted';
+  attempt: number;
+  model?: string;
+}
+
 export interface SessionIndexDegradedEvent {
   reason: string;
   degraded_count: number;
@@ -1423,6 +1431,19 @@ export const telemetryEventDefinitions = {
       error_type: 'Classified error category of the rejection',
       model: 'Model that rejected the request',
       turn_id: 'Per-agent turn index; pair with agent_id to locate a turn within a session',
+    },
+  }),
+  llm_output_limit_recovery: defineAgentTelemetryEvent<LlmOutputLimitRecoveryEvent>({
+    owner: 'kimi-code',
+    comment:
+      'A truncated LLM response is continued directly, continued with an output-limit reminder, or fails after three recovery steps.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      step_no: 'Step index within the turn',
+      action:
+        "How the truncated response was handled: 'resumed' for direct signed-thinking continuation, 'nudged' for reminder continuation, or 'exhausted' after the third recovery step",
+      attempt: 'One-based output-limit recovery index within the current recovery sequence',
+      model: 'Model alias that produced the truncated response',
     },
   }),
   session_index_degraded: defineTelemetryEvent<SessionIndexDegradedEvent>({

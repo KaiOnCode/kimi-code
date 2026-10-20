@@ -36,7 +36,7 @@ function statusError(
 }
 
 function createStubRequester(
-  plan: readonly (LlmErrorMessage | 'ok' | 'empty' | 'think_only' | 'filtered_empty')[],
+  plan: readonly (LlmErrorMessage | 'ok' | 'empty' | 'think_only' | 'think_only_truncated' | 'filtered_empty')[],
 ) {
   let calls = 0;
   const requester: LlmRequester = {
@@ -54,6 +54,15 @@ function createStubRequester(
       }
       if (step === 'think_only') {
         onEvent?.({ type: 'llm.streaming.part', part: { type: 'think', think: 'reasoning' } });
+        onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      }
+      if (step === 'think_only_truncated') {
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'think', think: 'reasoning' } });
+        onEvent?.({
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'truncated', rawFinishReason: 'length' },
+        });
         onEvent?.({ type: 'llm.done' });
         return Promise.resolve();
       }
@@ -409,6 +418,36 @@ describe('turn machine llm retry', () => {
 
     expect(actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'done' });
     expect(retrying).toHaveLength(0);
+    expect(calls()).toBe(1);
+  });
+});
+
+describe('turn machine output-limit recovery', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('completes a truncated think-only step when recovery is enabled', async () => {
+    const { requester, calls } = createStubRequester(['think_only_truncated']);
+    const { actor, retrying, failed } = startTurnActor(requester, {
+      allowTruncatedThinkOnly: true,
+      retry: { maxAttemptsPerStep: 3 },
+    });
+
+    await flush();
+
+    const output = actor.getSnapshot().context.turnOutput;
+    expect(output).toMatchObject({ type: 'done' });
+    const produced = output?.type === 'done' ? output.produced : [];
+    expect(produced).toHaveLength(1);
+    expect(produced[0]?.message.content).toEqual([{ type: 'think', think: 'reasoning' }]);
+    expect(produced[0]?.meta?.finish).toMatchObject({ finishReason: 'truncated' });
+    expect(retrying).toHaveLength(0);
+    expect(failed).toHaveLength(0);
     expect(calls()).toBe(1);
   });
 });

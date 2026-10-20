@@ -84,4 +84,15 @@ describe('emptyResponseError', () => {
       ),
     ).toBeNull();
   });
+
+  it('allows think-only truncation only when output-limit recovery is enabled', () => {
+    const thinkOnly = accumulatedMessage([{ type: 'think', think: 'reasoning' }]);
+    const finish = { finishReason: 'truncated', rawFinishReason: 'length' } as const;
+    expect(emptyResponseError(thinkOnly, model, finish)?.kind).toBe('empty_response');
+    expect(emptyResponseError(thinkOnly, model, finish, true)).toBeNull();
+    expect(
+      emptyResponseError(thinkOnly, model, { finishReason: 'completed', rawFinishReason: 'stop' }, true)
+        ?.kind,
+    ).toBe('empty_response');
+  });
 });

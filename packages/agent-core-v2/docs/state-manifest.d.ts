@@ -1027,6 +1027,7 @@ export interface AgentStateSnapshot {
       };
       readonly thinkingEffort?: 'off' | 'on' | (string & {});
       readonly thinkingKeep?: string;
+      readonly allowTruncatedThinkOnly?: boolean;
       readonly maxCompletionTokens?: number;
       readonly usedContextTokens?: number;
       readonly maxContextTokens?: number;

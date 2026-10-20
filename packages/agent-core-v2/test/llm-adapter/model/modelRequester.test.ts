@@ -360,6 +360,37 @@ describe('ModelRequesterImpl request execution', () => {
     expect((empty as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
   });
 
+  it('emits a finish event for truncated think-only when recovery is enabled', async () => {
+    const requester = new FakeLlmRequester();
+    requester.handler = (_i, emit) => {
+      emitAll(emit, [
+        { type: 'llm.sent' },
+        { type: 'llm.streaming.part', part: { type: 'think', think: 'unfinished thought' } },
+        {
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'truncated', rawFinishReason: 'length' },
+        },
+        { type: 'llm.done' },
+      ]);
+    };
+    const impl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(requester),
+    );
+
+    const events = await collect(impl.request(INPUT, undefined, { allowTruncatedThinkOnly: true }));
+
+    expect(events.find((event) => event.type === 'finish')).toMatchObject({
+      providerFinishReason: 'truncated',
+      rawFinishReason: 'length',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'think', think: 'unfinished thought' }],
+        toolCalls: [],
+      },
+    });
+  });
+
   it('uploadVideo presence is the capability declaration', async () => {
     const requester = new FakeLlmRequester();
     const impl = new ModelRequesterImpl(
