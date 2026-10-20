@@ -24,6 +24,7 @@ import {
   MAIN_AGENT_ID,
   followSessionLifecycles,
   getLiveSessionById,
+  resumeSessionById,
   interactions,
   toDisposable,
 } from '@moonshot-ai/agent-core-v2';
@@ -221,8 +222,9 @@ export class SessionEventBroadcaster {
     transcriptGrades?: TranscriptGradeSpec,
     opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
   ): Promise<boolean> {
+    await resumeSessionById(this.opts.core.accessor, sessionId);
     const state = await this.ensureState(sessionId);
-    if (state === undefined) return false;
+    if (state === undefined || this.sessions.get(sessionId) !== state) return false;
     const prev = state.targets.get(target);
     state.targets.set(target, { agentFilter: filter, transcriptGrades });
     if (transcriptGrades !== undefined) {
@@ -284,6 +286,7 @@ export class SessionEventBroadcaster {
     state.targets.delete(target);
     state.transcriptSeeded.delete(target);
     state.deferredTranscriptSeeds.delete(target);
+    this.evictDetachedSession(sessionId);
   }
 
   unsubscribeTranscript(
@@ -644,6 +647,13 @@ export class SessionEventBroadcaster {
     state.transcriptStream = undefined;
     this.dropActivityTrackers(sessionId);
     this.opts.transcriptService?.dropSession(sessionId);
+    this.evictDetachedSession(sessionId);
+  }
+
+  private evictDetachedSession(sessionId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || state.detached !== true || state.targets.size > 0) return;
+    this.evictSession(sessionId);
   }
 
   private async reattachSession(sessionId: string): Promise<void> {

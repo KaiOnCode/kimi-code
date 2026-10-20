@@ -317,8 +317,24 @@ describe('server-v2 /api/v1/ws resync', () => {
     emitAgentEvent(sid, { type: 'turn.started', turnId: 7, agentId: 'main', origin: { kind: 'user' } } as unknown as Event2<any>);
     const frame = await c.next((f) => f.type === 'event.session.work_changed' && f.payload?.['busy'] === true, 5000);
     expect(frame.session_id).toBe(sid);
+    emitAgentEvent(sid, { type: 'turn.ended', turnId: 7, reason: 'completed' } as unknown as Event2<any>);
 
     c.ws.close();
     await c.closed;
+
+    expect(await manager.closeIfIdle(sid, 0)).toBe(true);
+    expect(manager.get(sid)).toBeUndefined();
+    const reconnected = await openConn(wsUrl, server!.authTokenService.getToken());
+    await reconnected.next((f) => f.type === 'server_hello');
+    reconnected.send({
+      type: 'client_hello',
+      id: 'h2',
+      payload: withToken({ client_id: 'cli', subscriptions: [sid] }),
+    });
+    const ack3 = await reconnected.next((f) => f.type === 'ack' && f.id === 'h2');
+    expect(ack3.payload).toMatchObject({ accepted_subscriptions: [sid], resync_required: [] });
+    expect(manager.get(sid)).toBeDefined();
+    reconnected.ws.close();
+    await reconnected.closed;
   }, 30_000);
 });

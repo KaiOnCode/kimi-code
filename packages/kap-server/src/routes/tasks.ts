@@ -1,7 +1,6 @@
 import {
   IAgentTaskService,
-  ISessionIndex,
-  getLiveSessionById,
+  resumeSessionById,
   type AgentTaskInfo,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -221,11 +220,8 @@ type ResolvedTasks =
   | { readonly kind: 'resolved'; readonly tasks: IAgentTaskService | undefined };
 
 async function resolveSessionTasks(core: Scope, sid: string): Promise<ResolvedTasks> {
-  const summary = await core.accessor.get(ISessionIndex).get(sid);
-  if (summary === undefined) return { kind: 'not_found' };
-
-  const session = getLiveSessionById(core.accessor, sid);
-  if (session === undefined) return { kind: 'resolved', tasks: undefined };
+  const session = await resumeSessionById(core.accessor, sid);
+  if (session === undefined) return { kind: 'not_found' };
   const agent = await ensureMainAgent(session);
   const tasks = agent.accessor.get(IAgentTaskService);
   return { kind: 'resolved', tasks };

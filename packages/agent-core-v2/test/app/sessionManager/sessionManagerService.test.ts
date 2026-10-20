@@ -11,6 +11,7 @@ import { SessionManager } from '#/app/sessionManager/sessionManagerService';
 import { ErrorCodes } from '#/errors';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { IAgentGoalService } from '#/features/goal/goalService';
+import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { sessionOccupiedError, type ISessionLockService } from '#/persistence/interface/sessionLock';
 import { Program } from '#/program/program';
@@ -521,6 +522,7 @@ describe('SessionManager closeIfIdle', () => {
     readonly terminal?: 'running' | 'exited';
     readonly cronTasks?: number;
     readonly goal?: 'active' | 'paused' | 'blocked' | 'complete';
+    readonly hooks?: boolean;
   }
 
   function setup(guards: Guards = {}, locks?: ISessionLockService) {
@@ -531,7 +533,6 @@ describe('SessionManager closeIfIdle', () => {
     const state = {
       busy: false,
       pending: 'none' as const,
-      terminal: 'exited' as const,
       cronTasks: 0,
       ...guards,
     };
@@ -543,7 +544,8 @@ describe('SessionManager closeIfIdle', () => {
       const agent = { id: 'main', accessor: { get: (token: unknown) => agentServices.get(token) } };
       const sessionServices = new Map<unknown, unknown>([
         [ISessionActivityView, { state: () => ({ busy: state.busy, mainTurnActive: false, pendingInteraction: state.pending }) }],
-        [ISessionTerminalService, { list: async () => [{ status: state.terminal }] }],
+        [ISessionTerminalService, { list: async () => state.terminal === undefined ? [] : [{ status: state.terminal }] }],
+        [IExternalHooksRunnerService, { ready: Promise.resolve(), hasHooksFor: () => state.hooks === true }],
         [IAgentLifecycleService, {
           list: () => [{ agentId: 'main' }],
           handleOf: (agentId: string) => (agentId === 'main' ? agent : undefined),
@@ -561,6 +563,7 @@ describe('SessionManager closeIfIdle', () => {
     const fake = {
       service: undefined as unknown as SessionLifecycleService,
       manager: undefined as unknown as SessionManager,
+      state,
       handle,
       closed,
       disposed,
@@ -633,9 +636,10 @@ describe('SessionManager closeIfIdle', () => {
     ['a pending approval', { pending: 'approval' }, false],
     ['a pending question', { pending: 'question' }, false],
     ['a running terminal', { terminal: 'running' }, false],
+    ['an exited terminal', { terminal: 'exited' }, false],
     ['pending cron tasks', { cronTasks: 1 }, false],
     ['an active goal', { goal: 'active' }, false],
-    ['an exited terminal', { terminal: 'exited' }, true],
+    ['lifecycle hooks', { hooks: true }, false],
     ['a paused goal', { goal: 'paused' }, true],
     ['a completed goal', { goal: 'complete' }, true],
   ];
@@ -645,6 +649,20 @@ describe('SessionManager closeIfIdle', () => {
     await create(fake);
     expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(expected);
     expect(fake.manager.get('session-1') !== undefined).toBe(!expected);
+    fake.manager.dispose();
+  });
+
+  it('starts a full idle timeout after a long busy period', async () => {
+    const fake = setup({ busy: true });
+    await create(fake);
+    const idleTimeoutMs = 30 * 60_000;
+    vi.setSystemTime(Date.now() + 40 * 60_000);
+    expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(false);
+    fake.state.busy = false;
+    vi.setSystemTime(Date.now() + idleTimeoutMs - 1);
+    expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(false);
+    vi.setSystemTime(Date.now() + 1);
+    expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(true);
     fake.manager.dispose();
   });
 

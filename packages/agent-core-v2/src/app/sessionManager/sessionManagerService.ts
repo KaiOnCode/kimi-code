@@ -8,6 +8,7 @@ import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIn
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { IAgentGoalService } from '#/features/goal/goalService';
+import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
@@ -160,7 +161,10 @@ export class SessionManager implements ISessionManager {
     return this.serializeLifecycle(sessionId, async () => {
       const handle = this.sessions.get(sessionId);
       if (handle === undefined || !this.idleFor(sessionId, idleTimeoutMs)) return false;
-      if (!(await this.reclaimable(handle))) return false;
+      if (!(await this.reclaimable(handle))) {
+        this.lastUsed.set(sessionId, Date.now());
+        return false;
+      }
       let lease: SessionLockLease;
       try {
         lease = this.sessionLocks.lease(sessionId);
@@ -172,7 +176,10 @@ export class SessionManager implements ISessionManager {
         const owner = this.owners.get(sessionId);
         if (this.sessions.get(sessionId) !== handle || owner === undefined) return false;
         if (!this.idleFor(sessionId, idleTimeoutMs)) return false;
-        if (!(await this.reclaimable(handle))) return false;
+        if (!(await this.reclaimable(handle))) {
+          this.lastUsed.set(sessionId, Date.now());
+          return false;
+        }
         await owner.close(sessionId);
         return true;
       } finally {
@@ -189,8 +196,21 @@ export class SessionManager implements ISessionManager {
   private async reclaimable(handle: ISessionScopeHandle): Promise<boolean> {
     const activity = handle.accessor.get(ISessionActivityView).state();
     if (activity.busy || activity.pendingInteraction !== 'none') return false;
+    const hooks = handle.accessor.get(IExternalHooksRunnerService) as
+      | IExternalHooksRunnerService
+      | undefined;
+    if (hooks !== undefined) {
+      await hooks.ready;
+      if (
+        hooks.hasHooksFor('SessionStart') ||
+        hooks.hasHooksFor('SessionEnd') ||
+        hooks.hasHooksFor('SessionHeartbeat')
+      ) {
+        return false;
+      }
+    }
     const terminals = await handle.accessor.get(ISessionTerminalService).list();
-    if (terminals.some((terminal) => terminal.status === 'running')) return false;
+    if (terminals.length > 0) return false;
     const agents = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agents.list()) {
       const agentHandle = agents.handleOf(agent.agentId);
