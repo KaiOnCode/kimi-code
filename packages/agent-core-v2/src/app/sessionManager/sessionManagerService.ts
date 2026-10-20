@@ -1,4 +1,5 @@
 
+import type { CollectionView } from '#/_base/di/collection';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
@@ -6,11 +7,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, isError2, SessionErrors } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { IAgentCronService } from '#/features/cron/cronService';
-import { IAgentGoalService } from '#/features/goal/goalService';
-import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
 import { ISessionTerminalService } from '#/session/terminal/terminalService';
 import {
@@ -32,6 +29,7 @@ import {
   type CreateManagedSessionOptions,
   type UnguardedSessionLifecycle,
 } from './sessionManager';
+import { SessionRetentionContribution } from './sessionRetention';
 
 interface SessionControllerEntry {
   readonly generation: string;
@@ -44,7 +42,7 @@ export class SessionManager implements ISessionManager {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly owners = new Map<string, SessionLifecycleService>();
-  private readonly lastUsed = new Map<string, number>();
+  private readonly lastActive = new Map<string, number>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly resumeFailures = new Map<string, Error>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
@@ -69,6 +67,8 @@ export class SessionManager implements ISessionManager {
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
+    @SessionRetentionContribution
+    private readonly retention: CollectionView<SessionRetentionContribution>,
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
@@ -88,7 +88,7 @@ export class SessionManager implements ISessionManager {
     this.resumeFailures.delete(sessionId);
     const promise = this.serializeLifecycle(sessionId, async () => {
       const handle = await (await this.controllerForSession(sessionId))?.resume(sessionId, options);
-      if (handle !== undefined) this.lastUsed.set(sessionId, Date.now());
+      if (handle !== undefined) this.lastActive.set(sessionId, Date.now());
       return handle;
     }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
@@ -160,11 +160,10 @@ export class SessionManager implements ISessionManager {
   async closeIfIdle(sessionId: string, idleTimeoutMs: number): Promise<boolean> {
     return this.serializeLifecycle(sessionId, async () => {
       const handle = this.sessions.get(sessionId);
-      if (handle === undefined || !this.idleFor(sessionId, idleTimeoutMs)) return false;
-      if (!(await this.reclaimable(handle))) {
-        this.lastUsed.set(sessionId, Date.now());
-        return false;
-      }
+      const owner = this.owners.get(sessionId);
+      const lastActive = this.lastActive.get(sessionId);
+      if (handle === undefined || owner === undefined || lastActive === undefined) return false;
+      if (Date.now() - lastActive < idleTimeoutMs) return false;
       let lease: SessionLockLease;
       try {
         lease = this.sessionLocks.lease(sessionId);
@@ -173,11 +172,8 @@ export class SessionManager implements ISessionManager {
         throw error;
       }
       try {
-        const owner = this.owners.get(sessionId);
-        if (this.sessions.get(sessionId) !== handle || owner === undefined) return false;
-        if (!this.idleFor(sessionId, idleTimeoutMs)) return false;
-        if (!(await this.reclaimable(handle))) {
-          this.lastUsed.set(sessionId, Date.now());
+        if (await this.retained(handle)) {
+          this.lastActive.set(sessionId, Date.now());
           return false;
         }
         await owner.close(sessionId);
@@ -188,39 +184,13 @@ export class SessionManager implements ISessionManager {
     });
   }
 
-  private idleFor(sessionId: string, idleTimeoutMs: number): boolean {
-    const used = this.lastUsed.get(sessionId);
-    return used !== undefined && Date.now() - used >= idleTimeoutMs;
-  }
-
-  private async reclaimable(handle: ISessionScopeHandle): Promise<boolean> {
+  private async retained(handle: ISessionScopeHandle): Promise<boolean> {
+    if ((await handle.accessor.get(ISessionTerminalService).list()).length > 0) return true;
+    for (const contribution of this.retention.items) {
+      if (await contribution.retains(handle)) return true;
+    }
     const activity = handle.accessor.get(ISessionActivityView).state();
-    if (activity.busy || activity.pendingInteraction !== 'none') return false;
-    const hooks = handle.accessor.get(IExternalHooksRunnerService) as
-      | IExternalHooksRunnerService
-      | undefined;
-    if (hooks !== undefined) {
-      await hooks.ready;
-      if (
-        hooks.hasHooksFor('SessionStart') ||
-        hooks.hasHooksFor('SessionEnd') ||
-        hooks.hasHooksFor('SessionHeartbeat')
-      ) {
-        return false;
-      }
-    }
-    const terminals = await handle.accessor.get(ISessionTerminalService).list();
-    if (terminals.length > 0) return false;
-    const agents = handle.accessor.get(IAgentLifecycleService);
-    for (const agent of agents.list()) {
-      const agentHandle = agents.handleOf(agent.agentId);
-      if (agentHandle === undefined) continue;
-      const cron = agentHandle.accessor.get(IAgentCronService) as IAgentCronService | undefined;
-      if (cron !== undefined && cron.list().length > 0) return false;
-      const goals = agentHandle.accessor.get(IAgentGoalService) as IAgentGoalService | undefined;
-      if (goals?.getGoal().goal?.status === 'active') return false;
-    }
-    return true;
+    return activity.busy || activity.pendingInteraction !== 'none';
   }
 
   private async archiveInner(sessionId: string): Promise<void> {
@@ -307,7 +277,7 @@ export class SessionManager implements ISessionManager {
     this.controllers.clear();
     this.sessions.clear();
     this.owners.clear();
-    this.lastUsed.clear();
+    this.lastActive.clear();
     this.willCreateEmitter.dispose();
     this.didCreateEmitter.dispose();
     this.willCloseEmitter.dispose();
@@ -331,7 +301,7 @@ export class SessionManager implements ISessionManager {
       entry.sessionCount += 1;
       this.sessions.set(event.sessionId, event.handle);
       this.owners.set(event.sessionId, controller);
-      this.lastUsed.set(event.sessionId, Date.now());
+      this.lastActive.set(event.sessionId, Date.now());
       this.didCreateEmitter.fire(event);
     }));
     subscriptions.add(controller.onWillCloseSession((event) => this.willCloseEmitter.fire(event)));
@@ -339,7 +309,7 @@ export class SessionManager implements ISessionManager {
       entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
-      this.lastUsed.delete(event.sessionId);
+      this.lastActive.delete(event.sessionId);
       this.didCloseEmitter.fire(event);
       this.retireEntryIfIdle(workspaceId, entry);
     }));
@@ -347,7 +317,7 @@ export class SessionManager implements ISessionManager {
       entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
-      this.lastUsed.delete(event.sessionId);
+      this.lastActive.delete(event.sessionId);
       this.didArchiveEmitter.fire(event);
       this.retireEntryIfIdle(workspaceId, entry);
     }));

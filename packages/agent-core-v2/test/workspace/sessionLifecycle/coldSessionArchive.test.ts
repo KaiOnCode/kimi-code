@@ -240,6 +240,7 @@ function sessionManagerResuming(sessionId: string): SessionManager {
     { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager,
     { get: async () => summary } as unknown as ISessionIndex,
     new InMemorySessionLockService(),
+    { items: [], records: [], onDidChange: Event.None as Event<never> },
   );
 }
 

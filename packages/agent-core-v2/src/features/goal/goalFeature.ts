@@ -1,7 +1,9 @@
 import { ScopeActivation } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
+import { SessionRetentionContribution } from '#/app/sessionManager/sessionRetention';
 import { Feature } from '#/features/feature';
 import { registerFeature } from '#/features/featureRegistry';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
 import { IGoalDeadlineScheduler } from './goalDeadlineScheduler';
 import { GoalDeadlineSchedulerService } from './goalDeadlineSchedulerService';
@@ -15,12 +17,26 @@ import { SetGoalBudgetTool } from './tools/set-goal-budget/setGoalBudgetTool';
 import { IUpdateGoalTool } from './tools/update-goal/update-goal';
 import { UpdateGoalTool } from './tools/update-goal/updateGoalTool';
 
+export const goalSessionRetention: SessionRetentionContribution = {
+  name: 'goal',
+  retains: (session) => {
+    const agents = session.accessor.get(IAgentLifecycleService);
+    return agents
+      .list()
+      .some(
+        (agent) =>
+          agents.handleOf(agent.agentId)?.accessor.get(IAgentGoalService).getGoal().goal?.status === 'active',
+      );
+  },
+};
+
 export class GoalFeature extends Feature {
   static override readonly name = 'goal';
 
   constructor() {
     super();
     this.contributeAgentService(IAgentGoalService, AgentGoalService);
+    this.contribute(SessionRetentionContribution, goalSessionRetention);
     this.contributeService(LifecycleScope.App, IGoalDeadlineScheduler, GoalDeadlineSchedulerService, {
       activation: ScopeActivation.OnDemand,
     });

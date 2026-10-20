@@ -13,6 +13,7 @@ import { IFeatureManager } from '#/app/feature/featureManager';
 import { FeatureManagerService } from '#/app/feature/featureManagerService';
 import { IPluginService } from '#/app/plugin/plugin';
 import { LifecycleScope } from '#/app/scopes';
+import { SessionRetentionContribution } from '#/app/sessionManager/sessionRetention';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { IFeatureAssemblyService } from '#/features/featureAssembly';
 import { FeatureAssemblyService } from '#/features/featureAssemblyService';
@@ -76,6 +77,8 @@ describe('ExternalHooksFeature — assembly (src/features/externalHooks)', () =>
     expect(agentUnits.items.map((item) => item.name)).toEqual([
       `externalHooks:${String(IAgentExternalHooksService)}`,
     ]);
+    const retention = collectionViewOf(host.app, SessionRetentionContribution);
+    expect(retention.items.map((item) => item.name)).toEqual(['externalHooks']);
 
     await manager.unprovideUnit('externalHooks');
     await host.app.instantiation.cascade.whenIdle();
@@ -85,6 +88,7 @@ describe('ExternalHooksFeature — assembly (src/features/externalHooks)', () =>
     expect(() => host.app.accessor.get(IExternalHooksRunnerService)).toThrow();
     expect(sessionUnits.items).toHaveLength(0);
     expect(agentUnits.items).toHaveLength(0);
+    expect(retention.items).toHaveLength(0);
 
     host.dispose();
   });
