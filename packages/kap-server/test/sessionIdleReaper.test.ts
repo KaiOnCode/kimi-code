@@ -11,7 +11,11 @@ import type { ServerLogger } from '../src/services/pinoLoggerService';
 
 function fakeSessions(ids: readonly string[]) {
   const calls: string[] = [];
-  const fake = {
+  const fake: {
+    calls: string[];
+    impl: (sessionId: string) => Promise<boolean>;
+    manager: Pick<ISessionManager, 'list' | 'closeIfIdle'>;
+  } = {
     calls,
     impl: async (_sessionId: string) => true,
     manager: {
