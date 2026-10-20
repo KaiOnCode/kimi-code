@@ -42,7 +42,6 @@ export class SessionManager implements ISessionManager {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
   private readonly owners = new Map<string, SessionLifecycleService>();
-  private readonly lastActive = new Map<string, number>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly resumeFailures = new Map<string, Error>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
@@ -86,11 +85,9 @@ export class SessionManager implements ISessionManager {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
-    const promise = this.serializeLifecycle(sessionId, async () => {
-      const handle = await (await this.controllerForSession(sessionId))?.resume(sessionId, options);
-      if (handle !== undefined) this.lastActive.set(sessionId, Date.now());
-      return handle;
-    }).finally(() => this.pendingResumes.delete(sessionId));
+    const promise = this.serializeLifecycle(sessionId, async () =>
+      (await this.controllerForSession(sessionId))?.resume(sessionId, options),
+    ).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
       this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
@@ -161,9 +158,8 @@ export class SessionManager implements ISessionManager {
     return this.serializeLifecycle(sessionId, async () => {
       const handle = this.sessions.get(sessionId);
       const owner = this.owners.get(sessionId);
-      const lastActive = this.lastActive.get(sessionId);
-      if (handle === undefined || owner === undefined || lastActive === undefined) return false;
-      if (Date.now() - lastActive < idleTimeoutMs) return false;
+      if (handle === undefined || owner === undefined) return false;
+      if (Date.now() - handle.accessor.get(ISessionActivityView).lastActiveAt() < idleTimeoutMs) return false;
       let lease: SessionLockLease;
       try {
         lease = this.sessionLocks.lease(sessionId);
@@ -172,10 +168,7 @@ export class SessionManager implements ISessionManager {
         throw error;
       }
       try {
-        if (await this.retained(handle)) {
-          this.lastActive.set(sessionId, Date.now());
-          return false;
-        }
+        if (await this.retained(handle)) return false;
         await owner.close(sessionId);
         return true;
       } finally {
@@ -277,7 +270,6 @@ export class SessionManager implements ISessionManager {
     this.controllers.clear();
     this.sessions.clear();
     this.owners.clear();
-    this.lastActive.clear();
     this.willCreateEmitter.dispose();
     this.didCreateEmitter.dispose();
     this.willCloseEmitter.dispose();
@@ -301,7 +293,6 @@ export class SessionManager implements ISessionManager {
       entry.sessionCount += 1;
       this.sessions.set(event.sessionId, event.handle);
       this.owners.set(event.sessionId, controller);
-      this.lastActive.set(event.sessionId, Date.now());
       this.didCreateEmitter.fire(event);
     }));
     subscriptions.add(controller.onWillCloseSession((event) => this.willCloseEmitter.fire(event)));
@@ -309,7 +300,6 @@ export class SessionManager implements ISessionManager {
       entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
-      this.lastActive.delete(event.sessionId);
       this.didCloseEmitter.fire(event);
       this.retireEntryIfIdle(workspaceId, entry);
     }));
@@ -317,7 +307,6 @@ export class SessionManager implements ISessionManager {
       entry.sessionCount -= 1;
       this.sessions.delete(event.sessionId);
       this.owners.delete(event.sessionId);
-      this.lastActive.delete(event.sessionId);
       this.didArchiveEmitter.fire(event);
       this.retireEntryIfIdle(workspaceId, entry);
     }));

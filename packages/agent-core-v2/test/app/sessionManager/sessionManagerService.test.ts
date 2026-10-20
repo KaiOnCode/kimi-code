@@ -547,16 +547,21 @@ describe('SessionManager closeIfIdle', () => {
       busy: false,
       pending: 'none' as const,
       cronTasks: 0,
+      activeAt: Date.now(),
       ...guards,
     };
     const makeHandle = (): ISessionScopeHandle => {
+      state.activeAt = Date.now();
       const agentServices = new Map<unknown, unknown>([
         [IAgentCronService, { list: () => Array.from({ length: state.cronTasks }) }],
         [IAgentGoalService, { getGoal: () => ({ goal: state.goal === undefined ? null : { status: state.goal } }) }],
       ]);
       const agent = { id: 'main', accessor: { get: (token: unknown) => agentServices.get(token) } };
       const sessionServices = new Map<unknown, unknown>([
-        [ISessionActivityView, { state: () => ({ busy: state.busy, mainTurnActive: false, pendingInteraction: state.pending }) }],
+        [ISessionActivityView, {
+          state: () => ({ busy: state.busy, mainTurnActive: false, pendingInteraction: state.pending }),
+          lastActiveAt: () => state.activeAt,
+        }],
         [ISessionTerminalService, { list: async () => state.terminal === undefined ? [] : [{ status: state.terminal }] }],
         [IExternalHooksRunnerService, { ready: Promise.resolve(), hasHooksFor: () => state.hooks === true }],
         [IAgentLifecycleService, {
@@ -628,7 +633,7 @@ describe('SessionManager closeIfIdle', () => {
 
   afterEach(() => void vi.useRealTimers());
 
-  it('tracks lastActive across create and already-live resume', async () => {
+  it('measures idle from session activity rather than already-live resume access', async () => {
     const fake = setup();
     expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(false);
     await create(fake);
@@ -636,8 +641,6 @@ describe('SessionManager closeIfIdle', () => {
     expect(await fake.manager.closeIfIdle('session-1', 1000)).toBe(false);
     await fake.manager.resume('session-1');
     expect(fake.resumeCalls).toBe(1);
-    vi.setSystemTime(Date.now() + 999);
-    expect(await fake.manager.closeIfIdle('session-1', 1000)).toBe(false);
     vi.setSystemTime(Date.now() + 1);
     expect(await fake.manager.closeIfIdle('session-1', 1000)).toBe(true);
     expect(fake.closed).toEqual(['session-1']);
@@ -673,6 +676,7 @@ describe('SessionManager closeIfIdle', () => {
     vi.setSystemTime(Date.now() + 40 * 60_000);
     expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(false);
     fake.state.busy = false;
+    fake.state.activeAt = Date.now();
     vi.setSystemTime(Date.now() + idleTimeoutMs - 1);
     expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(false);
     vi.setSystemTime(Date.now() + 1);
