@@ -15,8 +15,6 @@ import { cronSessionRetention } from '#/features/cron/cronFeature';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { goalSessionRetention } from '#/features/goal/goalFeature';
 import { IAgentGoalService } from '#/features/goal/goalService';
-import { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
-import { externalHooksSessionRetention } from '#/features/externalHooks/externalHooksFeature';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { sessionOccupiedError, type ISessionLockService } from '#/persistence/interface/sessionLock';
 import { Program } from '#/program/program';
@@ -535,7 +533,6 @@ describe('SessionManager closeIfIdle', () => {
     readonly terminal?: 'running' | 'exited';
     readonly cronTasks?: number;
     readonly goal?: 'active' | 'paused' | 'blocked' | 'complete';
-    readonly hooks?: boolean;
   }
 
   function setup(guards: Guards = {}, locks?: ISessionLockService) {
@@ -563,7 +560,6 @@ describe('SessionManager closeIfIdle', () => {
           lastActiveAt: () => state.activeAt,
         }],
         [ISessionTerminalService, { list: async () => state.terminal === undefined ? [] : [{ status: state.terminal }] }],
-        [IExternalHooksRunnerService, { ready: Promise.resolve(), hasHooksFor: () => state.hooks === true }],
         [IAgentLifecycleService, {
           list: () => [{ agentId: 'main' }],
           handleOf: (agentId: string) => (agentId === 'main' ? agent : undefined),
@@ -587,6 +583,8 @@ describe('SessionManager closeIfIdle', () => {
       disposed,
       resumeCalls: 0,
       resumeMode: 'live' as 'live' | 'cold',
+      resumeSources: [] as string[],
+      closeReasons: [] as string[],
     };
     fake.service = {
       onWillCreateSession: Event.None,
@@ -599,15 +597,17 @@ describe('SessionManager closeIfIdle', () => {
         didCreate.fire({ sessionId: 'session-1', handle, source: 'startup' });
         return handle;
       },
-      resume: async () => {
+      resume: async (_sessionId: string, _options: unknown, source: 'resume' | 'reload' = 'resume') => {
         fake.resumeCalls += 1;
+        fake.resumeSources.push(source);
         if (fake.resumeMode === 'live') return handle;
         const next = makeHandle();
-        didCreate.fire({ sessionId: 'session-1', handle: next, source: 'resume' });
+        didCreate.fire({ sessionId: 'session-1', handle: next, source });
         return next;
       },
-      close: async (sessionId: string) => {
+      close: async (sessionId: string, reason: 'exit' | 'reclaim' = 'exit') => {
         closed.push(sessionId);
+        fake.closeReasons.push(reason);
         void handle.dispose();
         didClose.fire({ sessionId });
       },
@@ -621,7 +621,7 @@ describe('SessionManager closeIfIdle', () => {
       { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager,
       { get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }) } as unknown as ISessionIndex,
       locks ?? new InMemorySessionLockService(),
-      retentionView(cronSessionRetention, goalSessionRetention, externalHooksSessionRetention),
+      retentionView(cronSessionRetention, goalSessionRetention),
     );
     return fake;
   }
@@ -656,7 +656,6 @@ describe('SessionManager closeIfIdle', () => {
     ['an exited terminal', { terminal: 'exited' }, false],
     ['pending cron tasks', { cronTasks: 1 }, false],
     ['an active goal', { goal: 'active' }, false],
-    ['lifecycle hooks', { hooks: true }, false],
     ['a paused goal', { goal: 'paused' }, true],
     ['a completed goal', { goal: 'complete' }, true],
   ];
@@ -681,6 +680,19 @@ describe('SessionManager closeIfIdle', () => {
     expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(false);
     vi.setSystemTime(Date.now() + 1);
     expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(true);
+    fake.manager.dispose();
+  });
+
+  it('closes with the reclaim reason and reloads only the next resume of a reclaimed session', async () => {
+    const fake = setup();
+    await create(fake);
+    fake.resumeMode = 'cold';
+    expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(true);
+    await fake.manager.resume('session-1');
+    await fake.manager.close('session-1');
+    await fake.manager.resume('session-1');
+    expect(fake.closeReasons).toEqual(['reclaim', 'exit']);
+    expect(fake.resumeSources).toEqual(['reload', 'resume']);
     fake.manager.dispose();
   });
 
@@ -723,9 +735,9 @@ describe('SessionManager closeIfIdle', () => {
       releaseClose = resolve;
     });
     const originalClose = fake.service.close;
-    (fake.service as unknown as { close: (id: string) => Promise<void> }).close = async (id: string) => {
+    (fake.service as unknown as { close: typeof originalClose }).close = async (id, reason) => {
       await closeGate;
-      await originalClose(id);
+      await originalClose(id, reason);
     };
     fake.resumeMode = 'cold';
     const reclaim = fake.manager.closeIfIdle('session-1', 0);

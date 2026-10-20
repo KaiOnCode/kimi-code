@@ -594,7 +594,7 @@ export interface AgentCreateFailedEvent {
 }
 
 export interface SessionEndedEvent {
-  reason: 'exit' | 'archive';
+  reason: 'exit' | 'reclaim' | 'archive';
 }
 
 export interface WebFetchFallbackEvent {

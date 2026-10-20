@@ -44,6 +44,7 @@ export class SessionManager implements ISessionManager {
   private readonly owners = new Map<string, SessionLifecycleService>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly resumeFailures = new Map<string, Error>();
+  private readonly reclaimed = new Set<string>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
   private readonly controllers = new Map<string, SessionControllerEntry>();
   private readonly controllerEntries = new Set<SessionControllerEntry>();
@@ -86,7 +87,11 @@ export class SessionManager implements ISessionManager {
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
     const promise = this.serializeLifecycle(sessionId, async () =>
-      (await this.controllerForSession(sessionId))?.resume(sessionId, options),
+      (await this.controllerForSession(sessionId))?.resume(
+        sessionId,
+        options,
+        this.reclaimed.has(sessionId) ? 'reload' : 'resume',
+      ),
     ).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
@@ -169,7 +174,8 @@ export class SessionManager implements ISessionManager {
       }
       try {
         if (await this.retained(handle)) return false;
-        await owner.close(sessionId);
+        await owner.close(sessionId, 'reclaim');
+        this.reclaimed.add(sessionId);
         return true;
       } finally {
         lease.release();
@@ -226,6 +232,7 @@ export class SessionManager implements ISessionManager {
       const failed = settled.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
       await controller.delete(sessionId);
+      this.reclaimed.delete(sessionId);
     });
   }
 
@@ -270,6 +277,7 @@ export class SessionManager implements ISessionManager {
     this.controllers.clear();
     this.sessions.clear();
     this.owners.clear();
+    this.reclaimed.clear();
     this.willCreateEmitter.dispose();
     this.didCreateEmitter.dispose();
     this.willCloseEmitter.dispose();
@@ -291,6 +299,7 @@ export class SessionManager implements ISessionManager {
     subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
     subscriptions.add(controller.onDidCreateSession((event) => {
       entry.sessionCount += 1;
+      this.reclaimed.delete(event.sessionId);
       this.sessions.set(event.sessionId, event.handle);
       this.owners.set(event.sessionId, controller);
       this.didCreateEmitter.fire(event);

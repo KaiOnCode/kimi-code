@@ -33,6 +33,7 @@ import { CHILD_SESSION_KIND,
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
+import type { SessionEndedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { bindTelemetryScope } from '#/app/telemetry/telemetryService';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
@@ -342,7 +343,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this._onDidCreateSession.fireAsync(event, NO_ABORT);
     event.handle.accessor.get(ITelemetryService).track2('session_started', {
-      resumed: event.source === 'resume',
+      resumed: event.source !== 'startup',
       experimental_flags: this.flags.exposedIds().toSorted().join(','),
     });
   }
@@ -352,13 +353,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return this.sessions.get(sessionId);
   }
 
-  resume(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
+  resume(
+    sessionId: string,
+    opts?: ResumeSessionOptions,
+    source: 'resume' | 'reload' = 'resume',
+  ): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return Promise.resolve(live);
     this.resumeFailures.delete(sessionId);
-    const promise = this.doResume(sessionId, opts)
+    const promise = this.doResume(sessionId, source, opts)
       .catch((error: unknown) => {
         this.telemetry
           .withContext({ session_id: sessionId })
@@ -381,6 +386,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async doResume(
     sessionId: string,
+    source: 'resume' | 'reload',
     opts?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
     const live = this.sessions.get(sessionId);
@@ -401,7 +407,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (agents.get(MAIN_AGENT_ID) === undefined) {
         await agents.create({ agentId: MAIN_AGENT_ID });
       }
-      await this.announceCreated({ sessionId, handle, source: 'resume' });
+      await this.announceCreated({ sessionId, handle, source });
     } catch (error) {
       this.sessions.delete(sessionId);
       void handle.dispose();
@@ -418,10 +424,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return ready;
   }
 
-  async close(sessionId: string): Promise<void> {
+  async close(sessionId: string, reason: 'exit' | 'reclaim' = 'exit'): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
+    await this.announceWillClose({ sessionId, handle, reason });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
     await this.appendLogStore.drainRetirements();
@@ -430,7 +436,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
-    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'exit' });
+    const ended: SessionEndedEvent = { reason };
+    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', ended);
   }
 
   async archive(sessionId: string): Promise<void> {
