@@ -136,6 +136,7 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],
         opts.sessionRating,
         opts.transcriptService,
+        core,
       );
       registerRuntimeRoutes(apiV1 as unknown as Parameters<typeof registerRuntimeRoutes>[0], core);
       registerSessionExportRoute(
