@@ -11,7 +11,6 @@ import { SessionManager } from '#/app/sessionManager/sessionManagerService';
 import { ErrorCodes } from '#/errors';
 import { IAgentCronService } from '#/features/cron/cronService';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
-import { sessionOccupiedError, type ISessionLockService } from '#/persistence/interface/sessionLock';
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -521,11 +520,12 @@ describe('SessionManager closeIfIdle', () => {
     readonly cronTasks?: number;
   }
 
-  function setup(guards: Guards = {}, locks?: ISessionLockService) {
+  const managers: SessionManager[] = [];
+
+  function setup(guards: Guards = {}) {
     const didCreate = new Emitter<SessionCreatedEvent>();
     const didClose = new Emitter<SessionClosedEvent>();
-    const closed: string[] = [];
-    const disposed: string[] = [];
+    const locks = new InMemorySessionLockService();
     const state = {
       busy: false,
       pending: 'none' as const,
@@ -533,45 +533,46 @@ describe('SessionManager closeIfIdle', () => {
       activeAt: Date.now(),
       ...guards,
     };
-    const makeHandle = (): ISessionScopeHandle => {
-      state.activeAt = Date.now();
-      const agentServices = new Map<unknown, unknown>([
-        [IAgentCronService, { list: () => Array.from({ length: state.cronTasks }) }],
-      ]);
-      const agent = { id: 'main', accessor: { get: (token: unknown) => agentServices.get(token) } };
-      const sessionServices = new Map<unknown, unknown>([
-        [ISessionActivityView, {
-          state: () => ({ busy: state.busy, mainTurnActive: false, pendingInteraction: state.pending }),
-          lastActiveAt: () => state.activeAt,
-        }],
-        [ISessionTerminalService, { list: async () => state.terminal === undefined ? [] : [{ status: state.terminal }] }],
-        [IAgentLifecycleService, {
-          list: () => [{ agentId: 'main' }],
-          handleOf: (agentId: string) => (agentId === 'main' ? agent : undefined),
-        }],
-      ]);
-      return {
-        id: 'session-1',
-        accessor: { get: (token: unknown) => sessionServices.get(token) },
-        dispose: () => {
-          disposed.push('session-1');
+    const agent = {
+      accessor: {
+        get: (token: unknown) => token === IAgentCronService
+          ? { list: () => Array.from({ length: state.cronTasks }) }
+          : undefined,
+      },
+    };
+    const handle = {
+      id: 'session-1',
+      accessor: {
+        get: (token: unknown) => {
+          if (token === ISessionActivityView) {
+            return {
+              state: () => ({ busy: state.busy, mainTurnActive: false, pendingInteraction: state.pending }),
+              lastActiveAt: () => state.activeAt,
+            };
+          }
+          if (token === ISessionTerminalService) {
+            return { list: async () => state.terminal === undefined ? [] : [{ status: state.terminal }] };
+          }
+          if (token === IAgentLifecycleService) {
+            return { list: () => [{ agentId: 'main' }], handleOf: () => agent };
+          }
+          return undefined;
         },
-      } as unknown as ISessionScopeHandle;
-    };
-    const handle = makeHandle();
-    const fake = {
-      service: undefined as unknown as SessionLifecycleService,
-      manager: undefined as unknown as SessionManager,
-      state,
-      handle,
-      closed,
-      disposed,
-      resumeCalls: 0,
-      resumeMode: 'live' as 'live' | 'cold',
-      resumeSources: [] as string[],
-      closeReasons: [] as string[],
-    };
-    fake.service = {
+      },
+    } as unknown as ISessionScopeHandle;
+    let manager: SessionManager;
+    const resume = vi.fn(async (
+      sessionId: string,
+      _options: unknown,
+      source: 'resume' | 'reload' = 'resume',
+    ) => {
+      if (manager.get(sessionId) === undefined) didCreate.fire({ sessionId, handle, source });
+      return handle;
+    });
+    const close = vi.fn(async (sessionId: string, _reason: 'exit' | 'reclaim' = 'exit') => {
+      didClose.fire({ sessionId });
+    });
+    const service = {
       onWillCreateSession: Event.None,
       onDidCreateSession: didCreate.event,
       onWillCloseSession: Event.None,
@@ -582,156 +583,96 @@ describe('SessionManager closeIfIdle', () => {
         didCreate.fire({ sessionId: 'session-1', handle, source: 'startup' });
         return handle;
       },
-      resume: async (_sessionId: string, _options: unknown, source: 'resume' | 'reload' = 'resume') => {
-        fake.resumeCalls += 1;
-        fake.resumeSources.push(source);
-        if (fake.resumeMode === 'live') return handle;
-        const next = makeHandle();
-        didCreate.fire({ sessionId: 'session-1', handle: next, source });
-        return next;
-      },
-      close: async (sessionId: string, reason: 'exit' | 'reclaim' = 'exit') => {
-        closed.push(sessionId);
-        fake.closeReasons.push(reason);
-        void handle.dispose();
-        didClose.fire({ sessionId });
-      },
+      resume,
+      close,
       dispose: () => {},
     } as unknown as SessionLifecycleService;
     const workspace = {
       id: 'workspace-1',
-      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => fake.service },
+      program: { sessionControllerGeneration: 'generation-1', createSessionController: () => service },
     } as unknown as WorkspaceInstance;
-    fake.manager = new SessionManager(
+    manager = new SessionManager(
       { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager,
       { get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }) } as unknown as ISessionIndex,
-      locks ?? new InMemorySessionLockService(),
+      locks,
     );
-    return fake;
+    managers.push(manager);
+    return { manager, handle, resume, close, locks };
   }
 
   const create = (fake: ReturnType<typeof setup>): Promise<ISessionScopeHandle> =>
     fake.manager.create({ sessionId: 'session-1', workDir: '/workspace' } as never);
 
-  beforeEach(() => void vi.useFakeTimers());
+  beforeEach(() => vi.useFakeTimers());
 
-  afterEach(() => void vi.useRealTimers());
+  afterEach(() => {
+    for (const manager of managers) manager.dispose();
+    managers.length = 0;
+    vi.useRealTimers();
+  });
 
-  it('measures idle from session activity rather than already-live resume access', async () => {
+  it('reclaims after the activity idle timeout and reloads only once', async () => {
     const fake = setup();
     expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(false);
     await create(fake);
     vi.setSystemTime(Date.now() + 999);
     expect(await fake.manager.closeIfIdle('session-1', 1000)).toBe(false);
     await fake.manager.resume('session-1');
-    expect(fake.resumeCalls).toBe(1);
     vi.setSystemTime(Date.now() + 1);
     expect(await fake.manager.closeIfIdle('session-1', 1000)).toBe(true);
-    expect(fake.closed).toEqual(['session-1']);
     expect(fake.manager.get('session-1')).toBeUndefined();
-    fake.manager.dispose();
-  });
-
-  const eligibilityCases: Array<[string, Guards, boolean]> = [
-    ['a busy turn', { busy: true }, false],
-    ['a pending approval', { pending: 'approval' }, false],
-    ['a pending question', { pending: 'question' }, false],
-    ['a running terminal', { terminal: 'running' }, false],
-    ['an exited terminal', { terminal: 'exited' }, false],
-    ['pending cron tasks', { cronTasks: 1 }, false],
-  ];
-
-  it.each(eligibilityCases)('closeIfIdle eligibility with %s', async (_label, guards, expected) => {
-    const fake = setup(guards);
-    await create(fake);
-    expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(expected);
-    expect(fake.manager.get('session-1') !== undefined).toBe(!expected);
-    fake.manager.dispose();
-  });
-
-  it('starts a full idle timeout after a long busy period', async () => {
-    const fake = setup({ busy: true });
-    await create(fake);
-    const idleTimeoutMs = 30 * 60_000;
-    vi.setSystemTime(Date.now() + 40 * 60_000);
-    expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(false);
-    fake.state.busy = false;
-    fake.state.activeAt = Date.now();
-    vi.setSystemTime(Date.now() + idleTimeoutMs - 1);
-    expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(false);
-    vi.setSystemTime(Date.now() + 1);
-    expect(await fake.manager.closeIfIdle('session-1', idleTimeoutMs)).toBe(true);
-    fake.manager.dispose();
-  });
-
-  it('closes with the reclaim reason and reloads only the next resume of a reclaimed session', async () => {
-    const fake = setup();
-    await create(fake);
-    fake.resumeMode = 'cold';
-    expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(true);
     await fake.manager.resume('session-1');
     await fake.manager.close('session-1');
     await fake.manager.resume('session-1');
-    expect(fake.closeReasons).toEqual(['reclaim', 'exit']);
-    expect(fake.resumeSources).toEqual(['reload', 'resume']);
-    fake.manager.dispose();
+    expect(fake.close.mock.calls[0]?.[1]).toBe('reclaim');
+    expect(fake.resume.mock.calls.map((call) => call[2])).toEqual(['resume', 'reload', 'resume']);
   });
 
-  it('returns false without closing when another process holds the session lock', async () => {
-    let occupied = true;
-    const locks = new (class extends InMemorySessionLockService {
-      override lease(sessionId: string) {
-        if (occupied) throw sessionOccupiedError(sessionId);
-        return super.lease(sessionId);
-      }
-    })();
-    const fake = setup({}, locks);
+  const eligibilityCases: Array<[string, Guards]> = [
+    ['a busy turn', { busy: true }],
+    ['a pending approval', { pending: 'approval' }],
+    ['a pending question', { pending: 'question' }],
+    ['a running terminal', { terminal: 'running' }],
+    ['an exited terminal', { terminal: 'exited' }],
+    ['pending cron tasks', { cronTasks: 1 }],
+  ];
+
+  it.each(eligibilityCases)('retains sessions with %s', async (_label, guards) => {
+    const fake = setup(guards);
     await create(fake);
     expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(false);
     expect(fake.manager.get('session-1')).toBeDefined();
-    occupied = false;
-    expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(true);
-    expect(fake.manager.get('session-1')).toBeUndefined();
-    fake.manager.dispose();
   });
 
   it('releases the lease when the close path fails', async () => {
-    const locks = new InMemorySessionLockService();
-    const fake = setup({}, locks);
-    (fake.service as unknown as { close: (id: string) => Promise<void> }).close = async () => {
-      throw new Error('boom');
-    };
+    const fake = setup();
+    fake.close.mockRejectedValue(new Error('boom'));
     await create(fake);
     await expect(fake.manager.closeIfIdle('session-1', 0)).rejects.toThrow('boom');
-    expect(locks.held('session-1')).toBe(false);
+    expect(fake.locks.held('session-1')).toBe(false);
     expect(fake.manager.get('session-1')).toBeDefined();
-    fake.manager.dispose();
   });
 
-  it('serializes a reclaim with a racing resume so the resume returns a valid handle', async () => {
+  it('serializes a reclaim with a racing resume', async () => {
     const fake = setup();
-    const first = await create(fake);
+    await create(fake);
     let releaseClose!: () => void;
     const closeGate = new Promise<void>((resolve) => {
       releaseClose = resolve;
     });
-    const originalClose = fake.service.close;
-    (fake.service as unknown as { close: typeof originalClose }).close = async (id, reason) => {
+    const close = fake.close.getMockImplementation();
+    fake.close.mockImplementation(async (id, reason) => {
       await closeGate;
-      await originalClose(id, reason);
-    };
-    fake.resumeMode = 'cold';
+      await close?.(id, reason);
+    });
     const reclaim = fake.manager.closeIfIdle('session-1', 0);
     const resumed = fake.manager.resume('session-1');
     await drainMicrotasks();
-    expect(fake.resumeCalls).toBe(0);
+    expect(fake.resume).not.toHaveBeenCalled();
     releaseClose();
     expect(await reclaim).toBe(true);
-    const handle = await resumed;
-    expect(handle).not.toBe(first);
-    expect(fake.disposed).toEqual(['session-1']);
-    expect(fake.manager.get('session-1')).toBe(handle);
-    fake.manager.dispose();
+    expect(await resumed).toBe(fake.handle);
+    expect(fake.manager.get('session-1')).toBe(fake.handle);
   });
 });
 

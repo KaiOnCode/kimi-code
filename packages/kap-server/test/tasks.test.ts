@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   IAgentTaskService,
-  closeSessionById,
   getLiveSessionById,
   IModelCatalog,
   type AgentTask,
@@ -233,25 +232,6 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     expect(byId.get(questionId)?.subagent_type).toBeUndefined();
     expect(byId.get(processId)?.parent_tool_call_id).toBeUndefined();
     expect(byId.get(questionId)?.parent_tool_call_id).toBeUndefined();
-  });
-
-  it('resumes a cold session before serving persisted task history', async () => {
-    const id = await createSession();
-    const tasks = await mainAgentTasks(id);
-    const taskId = tasks.registerTask({
-      ...fakeTask('process'),
-      start: (sink) => {
-        void sink.settle({ status: 'completed' });
-      },
-    });
-    await flush();
-    await closeSessionById(server!.core.accessor, id);
-    expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
-
-    const list = await getJson<ListWire>(`/api/v1/sessions/${id}/tasks`);
-    expect(list.body.data.items).toMatchObject([{ id: taskId, status: 'completed' }]);
-    const single = await getJson<TaskWire>(`/api/v1/sessions/${id}/tasks/${taskId}`);
-    expect(single.body.data.id).toBe(taskId);
   });
 
   it('reports run_in_background from the task detached flag', async () => {

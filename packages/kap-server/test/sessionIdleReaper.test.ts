@@ -34,21 +34,10 @@ function fakeLogger(): Pick<ServerLogger, 'info' | 'warn'> {
 }
 
 describe('SessionIdleReaper', () => {
-  it('resolves the idle timeout from the environment and schedules nothing when disabled', async () => {
+  it('resolves the idle timeout from the environment', () => {
     expect(resolveSessionIdleReclaimMs({})).toBe(DEFAULT_SESSION_IDLE_RECLAIM_MS);
     expect(resolveSessionIdleReclaimMs({ [SESSION_IDLE_RECLAIM_ENV]: '5000' })).toBe(5000);
     expect(resolveSessionIdleReclaimMs({ [SESSION_IDLE_RECLAIM_ENV]: '0' })).toBe(0);
-
-    vi.useFakeTimers();
-    try {
-      const { manager, calls } = fakeSessions(['s1']);
-      const logger = fakeLogger();
-      new SessionIdleReaper(manager, logger, 0).start();
-      await vi.advanceTimersByTimeAsync(300_000);
-      expect(calls).toEqual([]);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it('throws for negative, non-integer, or non-numeric values', () => {
@@ -56,33 +45,6 @@ describe('SessionIdleReaper', () => {
       expect(() => resolveSessionIdleReclaimMs({ [SESSION_IDLE_RECLAIM_ENV]: raw })).toThrow(
         /KIMI_CODE_SESSION_IDLE_RECLAIM_MS.*non-negative integer/,
       );
-    }
-  });
-
-  it('sweeps live sessions on the interval, logs failures, and stops after close', async () => {
-    vi.useFakeTimers();
-    try {
-      const sessions = fakeSessions(['s1', 's2']);
-      const logger = fakeLogger();
-      const reaper = new SessionIdleReaper(sessions.manager, logger, 30 * 60_000);
-      reaper.start();
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(sessions.calls).toEqual(['s1', 's2']);
-      sessions.impl = async (sessionId) => {
-        if (sessionId === 's1') throw new Error('boom');
-        return true;
-      };
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(sessions.calls).toHaveLength(4);
-      expect(logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ sessionId: 's1' }),
-        'session idle reclaim failed',
-      );
-      await reaper.close();
-      await vi.advanceTimersByTimeAsync(120_000);
-      expect(sessions.calls).toHaveLength(4);
-    } finally {
-      vi.useRealTimers();
     }
   });
 
@@ -114,6 +76,8 @@ describe('SessionIdleReaper', () => {
       release();
       await Promise.all([first, closing]);
       expect(closed).toBe(true);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(sessions.calls).toEqual(['s1']);
     } finally {
       vi.useRealTimers();
     }

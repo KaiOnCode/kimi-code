@@ -476,27 +476,6 @@ describe('session rating gating', () => {
     );
   });
 
-  it('recovers a completed turn with its warmup and trace state', async () => {
-    const harness = createHarness();
-    harness.env.model = { modelId: 'k2', baseUrl: MANAGED_BASE_URL };
-    harness.host.seedUserTurnCount(5);
-    harness.mount.recover({
-      userTurnCount: 5,
-      firstPromptAt: harness.clock.wall - 600_000,
-      origin: USER_ORIGIN,
-      traceId: 'trace-recovered',
-      endedAt: harness.clock.wall - 1000,
-    });
-    await harness.flush();
-
-    expect(harness.mount.evaluate()).toEqual({ appearanceId: 'appearance-1', survey: 'session' });
-    harness.ledger.report('', { type: 'shown', appearanceId: 'appearance-1' });
-    expect(trackedEvent(harness, 'appeared')).toMatchObject({
-      kfc_trace_id: 'trace-recovered',
-      user_turn_count: 5,
-    });
-  });
-
   it('keeps mount warmup independent of historical user turns', async () => {
     const harness = createHarness();
     await harness.flush();

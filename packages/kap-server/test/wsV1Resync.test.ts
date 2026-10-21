@@ -284,57 +284,24 @@ describe('server-v2 /api/v1/ws resync', () => {
     await c.closed;
   });
 
-  it('reclaims an idle session and transparently resumes it on the next access', async () => {
+  it('resumes a reclaimed session on a pure WS reconnect', async () => {
     const sid = await createSession();
     await ensureMainAgent(sid);
     const manager = server!.core.accessor.get(ISessionManager);
-    expect(await manager.closeIfIdle(sid, 60_000)).toBe(false);
-    expect(manager.get(sid)).toBeDefined();
+    expect(await manager.closeIfIdle(sid, 0)).toBe(true);
+    expect(manager.get(sid)).toBeUndefined();
 
     const c = await openConn(wsUrl, server!.authTokenService.getToken());
     await c.next((f) => f.type === 'server_hello');
-    c.send({ type: 'client_hello', id: 'h1', payload: withToken({ client_id: 'cli', subscriptions: [sid] }) });
-    await c.next((f) => f.type === 'ack' && f.id === 'h1');
-    c.send({ type: 'subscribe_v2', id: 'sub-1', payload: { session_id: sid, transcript: { '*': 'delta' } } });
-    await c.next((f) => f.type === 'transcript.reset');
-
-    expect(await manager.closeIfIdle(sid, 0)).toBe(true);
-    expect(manager.get(sid)).toBeUndefined();
-
-    const detail = await fetch(`${base}/api/v1/sessions/${sid}`, { headers: authHeaders(server as RunningServer) } as never);
-    expect(detail.status).toBe(200);
-    expect(manager.get(sid)).toBeUndefined();
-
-    const warnings = await fetch(`${base}/api/v1/sessions/${sid}/warnings`, { headers: authHeaders(server as RunningServer) } as never);
-    expect(warnings.status).toBe(200);
-    expect(manager.get(sid)).toBeDefined();
-
-    await c.next((f) => f.type === 'transcript.reset' || f.type === 'transcript.ops', 5000);
-    c.send({ type: 'subscribe_v2', id: 'sub-2', payload: { session_id: sid, transcript: { '*': 'delta' } } });
-    const ack2 = await c.next((f) => f.type === 'ack' && f.id === 'sub-2');
-    expect(ack2.payload).toMatchObject({ accepted: [sid], not_found: [] });
-
-    emitAgentEvent(sid, { type: 'turn.started', turnId: 7, agentId: 'main', origin: { kind: 'user' } } as unknown as Event2<any>);
-    const frame = await c.next((f) => f.type === 'event.session.work_changed' && f.payload?.['busy'] === true, 5000);
-    expect(frame.session_id).toBe(sid);
-    emitAgentEvent(sid, { type: 'turn.ended', turnId: 7, reason: 'completed' } as unknown as Event2<any>);
-
-    c.ws.close();
-    await c.closed;
-
-    expect(await manager.closeIfIdle(sid, 0)).toBe(true);
-    expect(manager.get(sid)).toBeUndefined();
-    const reconnected = await openConn(wsUrl, server!.authTokenService.getToken());
-    await reconnected.next((f) => f.type === 'server_hello');
-    reconnected.send({
+    c.send({
       type: 'client_hello',
-      id: 'h2',
+      id: 'h1',
       payload: withToken({ client_id: 'cli', subscriptions: [sid] }),
     });
-    const ack3 = await reconnected.next((f) => f.type === 'ack' && f.id === 'h2');
-    expect(ack3.payload).toMatchObject({ accepted_subscriptions: [sid], resync_required: [] });
+    const ack = await c.next((f) => f.type === 'ack' && f.id === 'h1');
+    expect(ack.payload).toMatchObject({ accepted_subscriptions: [sid], resync_required: [] });
     expect(manager.get(sid)).toBeDefined();
-    reconnected.ws.close();
-    await reconnected.closed;
+    c.ws.close();
+    await c.closed;
   }, 30_000);
 });

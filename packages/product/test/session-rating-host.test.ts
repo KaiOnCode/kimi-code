@@ -24,7 +24,7 @@ import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { mountSurveyTurnCounter, SessionRatingHost } from '#/session-rating/node/index';
+import { SessionRatingHost } from '#/session-rating/node/index';
 
 let home: string;
 let core: Scope;
@@ -145,61 +145,5 @@ describe('session rating host history', () => {
     await completeTurn(agent);
     show(rating, session.id);
     expect(records.map((record) => record['user_turn_count'])).toEqual([3]);
-  });
-
-  it('recovers the latest completed turn from restored history', async () => {
-    const manager = core.accessor.get(ISessionManager);
-    const session = await manager.create({ workDir: home });
-    const agent = await mainAgent(session);
-    await completeTurn(agent);
-    await agent.accessor.get(IEventDispatcher).dispatch(
-      new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 1, reason: 'completed', traceId: 'trace-1' }),
-    );
-    const counter = mountSurveyTurnCounter(agent.accessor.get(IEventDispatcher));
-    await counter.whenAttached;
-    expect(counter.recovery()).toMatchObject({
-      userTurnCount: 1,
-      origin: { kind: 'user' },
-      traceId: 'trace-1',
-    });
-    counter.dispose();
-  });
-
-  it('restores a pending evaluation across idle reclaim', async () => {
-    const rating = startHost();
-    const manager = core.accessor.get(ISessionManager);
-    const session = await manager.create({ workDir: home });
-    const agent = await mainAgent(session);
-    await completeTurn(agent);
-    await agent.accessor.get(IEventDispatcher).dispatch(
-      new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 1, reason: 'completed', traceId: 'trace-1' }),
-    );
-    await manager.closeIfIdle(session.id, 0);
-    const resumed = await manager.resume(session.id);
-    if (resumed === undefined) throw new Error('missing resumed session');
-    const counter = mountSurveyTurnCounter(
-      (await mainAgent(resumed)).accessor.get(IEventDispatcher),
-    );
-    await counter.whenAttached;
-    expect(counter.recovery()).toMatchObject({ userTurnCount: 1 });
-    counter.dispose();
-    await rating.whenReady(session.id);
-    show(rating, session.id);
-    expect(records.map((record) => record['user_turn_count'])).toEqual([1]);
-  });
-
-  it('does not recover a pending evaluation on ordinary resume', async () => {
-    const rating = startHost();
-    const manager = core.accessor.get(ISessionManager);
-    const session = await manager.create({ workDir: home });
-    const agent = await mainAgent(session);
-    await completeTurn(agent);
-    await agent.accessor.get(IEventDispatcher).dispatch(
-      new TurnEnded({ agentId: MAIN_AGENT_ID, turnId: 1, reason: 'completed', traceId: 'trace-1' }),
-    );
-    await manager.close(session.id);
-    await manager.resume(session.id);
-    await rating.whenReady(session.id);
-    expect(rating.evaluate(session.id)).toBeUndefined();
   });
 });

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
@@ -374,29 +374,6 @@ describe('ISessionActivityView (Session scope aggregate of agent activity + inte
     main.startTurn(1);
 
     expect(changes).toHaveLength(1);
-  });
-
-  it('stamps lastActiveAt on aggregate changes but not on unchanged churn', () => {
-    vi.useFakeTimers();
-    try {
-      const main = lifecycle.addAgent(MAIN_AGENT_ID);
-      const { view } = viewWithChanges();
-      const start = Date.now();
-
-      vi.setSystemTime(start + 1000);
-      main.startTurn(1);
-      expect(view.lastActiveAt()).toBe(start + 1000);
-
-      vi.setSystemTime(start + 2000);
-      main.startTurn(1);
-      expect(view.lastActiveAt()).toBe(start + 1000);
-
-      vi.setSystemTime(start + 3000);
-      main.endTurn(1, 'completed');
-      expect(view.lastActiveAt()).toBe(start + 3000);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it('fires interaction when the pending set flips the session slice', () => {

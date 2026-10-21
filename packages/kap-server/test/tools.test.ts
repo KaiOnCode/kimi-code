@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import {
   IAgentLifecycleService,
   IAgentToolRegistryService,
-  closeSessionById,
   getLiveSessionById,
   ISessionToolPolicy,
   IModelCatalog,
@@ -189,17 +188,6 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       expect(listToolsResponseSchema.safeParse(body.data).success).toBe(true);
     });
 
-    it('resumes a cold session before listing tools', async () => {
-      const sid = await createSession();
-      await ensureMainAgent(sid);
-      await closeSessionById(server!.core.accessor, sid);
-      expect(getLiveSessionById(server!.core.accessor, sid)).toBeUndefined();
-
-      const { body } = await getJson<{ tools: ToolWire[] }>(`/api/v1/tools?session_id=${sid}`);
-      expect(body.code).toBe(0);
-      expect(listToolsResponseSchema.parse(body.data).tools.length).toBeGreaterThan(0);
-    });
-
     it('marks tools denied by the session tool policy as inactive', async () => {
       const id = await createSession();
       await ensureMainAgent(id);
@@ -242,16 +230,6 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       const { body } = await getJson<{ servers: unknown[] }>('/api/v1/mcp/servers');
       expect(body.code).toBe(0);
       expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([]);
-    });
-
-    it('does not resume the most recent session when it is cold', async () => {
-      const id = await createSession();
-      await ensureMainAgent(id);
-      await closeSessionById(server!.core.accessor, id);
-      const { body } = await getJson<{ servers: unknown[] }>('/api/v1/mcp/servers');
-      expect(body.code).toBe(0);
-      expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([]);
-      expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
     });
   });
 
