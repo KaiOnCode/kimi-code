@@ -1,6 +1,5 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 
-import type { CollectionView } from '#/_base/di/collection';
 import { Emitter, Event } from '#/_base/event';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
@@ -9,12 +8,8 @@ import { Error2 } from '#/_base/errors/errors';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { reloadOnStale } from '#/app/sessionManager/sessionLookup';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
-import type { SessionRetentionContribution } from '#/app/sessionManager/sessionRetention';
 import { ErrorCodes } from '#/errors';
-import { cronSessionRetention } from '#/features/cron/cronFeature';
 import { IAgentCronService } from '#/features/cron/cronService';
-import { goalSessionRetention } from '#/features/goal/goalFeature';
-import { IAgentGoalService } from '#/features/goal/goalService';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { sessionOccupiedError, type ISessionLockService } from '#/persistence/interface/sessionLock';
 import { Program } from '#/program/program';
@@ -65,12 +60,6 @@ function controller(sessionId = 'session-1'): {
     dispose: () => {},
   } as unknown as SessionLifecycleService;
   return { service, handle };
-}
-
-function retentionView(
-  ...items: SessionRetentionContribution[]
-): CollectionView<SessionRetentionContribution> {
-  return { items, records: [], onDidChange: Event.None as Event<never> };
 }
 
 async function drainMicrotasks(ticks = 50): Promise<void> {
@@ -126,7 +115,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
 
     const resumePromise = manager.resume('session-1');
     const section = manager.withLifecycleSerialization('session-1', async () => {
@@ -154,7 +143,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -195,7 +184,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -233,7 +222,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -271,7 +260,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -309,7 +298,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -347,7 +336,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -384,7 +373,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
 
     let releaseSection!: () => void;
     const sectionGate = new Promise<void>((resolve) => {
@@ -422,7 +411,7 @@ describe('SessionManager', () => {
     const index = {
       get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }),
     } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
 
     await expect(manager.resume('session-1')).rejects.toThrow('boom');
     await expect(manager.whenResumeSettled('session-1')).rejects.toThrow('boom');
@@ -444,7 +433,7 @@ describe('SessionManager', () => {
       get: (workspaceId: string) => workspaceId === workspace.id ? workspace : undefined,
     } as unknown as IWorkspaceInstanceManager;
     const index = { get: async () => undefined } as unknown as ISessionIndex;
-    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService(), retentionView());
+    const manager = new SessionManager(workspaces, index, new InMemorySessionLockService());
     const created = await manager.create({ workDir: '/workspace' });
     expect(created).toBe(fake.handle);
     expect(manager.get('session-1')).toBe(fake.handle);
@@ -474,7 +463,6 @@ describe('SessionManager', () => {
       workspaces,
       { get: async () => undefined } as unknown as ISessionIndex,
       new InMemorySessionLockService(),
-      retentionView(),
     );
 
     expect(await manager.create({ workDir: '/workspace' })).toBe(first.handle);
@@ -512,7 +500,6 @@ describe('SessionManager', () => {
       workspaces,
       { get: async () => undefined } as unknown as ISessionIndex,
       new InMemorySessionLockService(),
-      retentionView(),
     );
 
     await expect(manager.create({ workDir: '/workspace' })).rejects.toThrow('boom');
@@ -532,7 +519,6 @@ describe('SessionManager closeIfIdle', () => {
     readonly pending?: 'none' | 'approval' | 'question';
     readonly terminal?: 'running' | 'exited';
     readonly cronTasks?: number;
-    readonly goal?: 'active' | 'paused' | 'blocked' | 'complete';
   }
 
   function setup(guards: Guards = {}, locks?: ISessionLockService) {
@@ -551,7 +537,6 @@ describe('SessionManager closeIfIdle', () => {
       state.activeAt = Date.now();
       const agentServices = new Map<unknown, unknown>([
         [IAgentCronService, { list: () => Array.from({ length: state.cronTasks }) }],
-        [IAgentGoalService, { getGoal: () => ({ goal: state.goal === undefined ? null : { status: state.goal } }) }],
       ]);
       const agent = { id: 'main', accessor: { get: (token: unknown) => agentServices.get(token) } };
       const sessionServices = new Map<unknown, unknown>([
@@ -621,7 +606,6 @@ describe('SessionManager closeIfIdle', () => {
       { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager,
       { get: async () => ({ workspaceId: 'workspace-1', cwd: '/workspace' }) } as unknown as ISessionIndex,
       locks ?? new InMemorySessionLockService(),
-      retentionView(cronSessionRetention, goalSessionRetention),
     );
     return fake;
   }
@@ -655,9 +639,6 @@ describe('SessionManager closeIfIdle', () => {
     ['a running terminal', { terminal: 'running' }, false],
     ['an exited terminal', { terminal: 'exited' }, false],
     ['pending cron tasks', { cronTasks: 1 }, false],
-    ['an active goal', { goal: 'active' }, false],
-    ['a paused goal', { goal: 'paused' }, true],
-    ['a completed goal', { goal: 'complete' }, true],
   ];
 
   it.each(eligibilityCases)('closeIfIdle eligibility with %s', async (_label, guards, expected) => {
@@ -894,7 +875,6 @@ describe('SessionManager controller retirement', () => {
       workspaces,
       { get: async () => undefined } as unknown as ISessionIndex,
       new InMemorySessionLockService(),
-      retentionView(),
     );
   }
 

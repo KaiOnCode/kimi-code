@@ -1,13 +1,14 @@
 
-import type { CollectionView } from '#/_base/di/collection';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, isError2, SessionErrors } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import { IAgentCronService } from '#/features/cron/cronService';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
 import { ISessionTerminalService } from '#/session/terminal/terminalService';
 import {
@@ -29,7 +30,6 @@ import {
   type CreateManagedSessionOptions,
   type UnguardedSessionLifecycle,
 } from './sessionManager';
-import { SessionRetentionContribution } from './sessionRetention';
 
 interface SessionControllerEntry {
   readonly generation: string;
@@ -67,8 +67,6 @@ export class SessionManager implements ISessionManager {
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
-    @SessionRetentionContribution
-    private readonly retention: CollectionView<SessionRetentionContribution>,
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
@@ -185,9 +183,11 @@ export class SessionManager implements ISessionManager {
 
   private async retained(handle: ISessionScopeHandle): Promise<boolean> {
     if ((await handle.accessor.get(ISessionTerminalService).list()).length > 0) return true;
-    for (const contribution of this.retention.items) {
-      if (await contribution.retains(handle)) return true;
-    }
+    const agents = handle.accessor.get(IAgentLifecycleService);
+    const hasCron = agents
+      .list()
+      .some((agent) => (agents.handleOf(agent.agentId)?.accessor.get(IAgentCronService).list().length ?? 0) > 0);
+    if (hasCron) return true;
     const activity = handle.accessor.get(ISessionActivityView).state();
     return activity.busy || activity.pendingInteraction !== 'none';
   }
