@@ -4528,14 +4528,16 @@ describe('Agent tools', () => {
       );
     });
 
-    it('fails an agent run when the final summary is truncated', async () => {
+    it('fails an agent run when the final summary stays truncated after recovery attempts', async () => {
       await ctx.dispose();
       ctx = createTestAgent();
-      ctx.mockNextProviderResponse({
-        parts: [{ type: 'text', text: 'partial summary' }],
-        finishReason: 'truncated',
-        rawFinishReason: 'length',
-      });
+      for (let index = 1; index <= 4; index++) {
+        ctx.mockNextProviderResponse({
+          parts: [{ type: 'text', text: 'partial summary' }],
+          finishReason: 'truncated',
+          rawFinishReason: 'length',
+        });
+      }
 
       const run = await runAgentTurn(
         currentAgentHandle(ctx, 'agent-child'),
@@ -4544,7 +4546,7 @@ describe('Agent tools', () => {
       );
 
       await expect(run.completion).rejects.toThrow(
-        'Subagent turn failed before completing its final summary: reason=max_tokens',
+        'The model did not complete the response after three output-limit recovery attempts.',
       );
     });
   });

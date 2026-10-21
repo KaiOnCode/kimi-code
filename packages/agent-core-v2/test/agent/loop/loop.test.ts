@@ -220,13 +220,14 @@ describe('Agent loop', () => {
     });
   });
 
-  it('marks a completed turn as truncated when the provider stops at max tokens', async () => {
+  it('recovers a completed turn truncated when the provider stops at max tokens', async () => {
     profile.update({ activeToolNames: [] });
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'partial answer' }],
       finishReason: 'truncated',
       rawFinishReason: 'length',
     });
+    ctx.mockNextResponse({ type: 'text', text: 'continued answer' });
 
     const { turn } = submitTurn(loop, 'Hello');
     expect(turn).toBeDefined();
@@ -234,8 +235,8 @@ describe('Agent loop', () => {
     await ctx.untilTurnEnd();
     await expect(turn.result).resolves.toEqual({
       type: 'completed',
-      steps: 1,
-      truncated: true,
+      steps: 2,
+      truncated: false,
     });
 
     const stepCompleted = ctx.allEvents.find(

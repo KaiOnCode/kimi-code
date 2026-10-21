@@ -4,7 +4,6 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
-import { IFlagService } from '#/app/flag/flag';
 import type { LlmOutputLimitRecoveryEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ChatProviderError } from '#/llm-adapter/contract/errors';
@@ -12,7 +11,6 @@ import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 
 import {
   IAgentOutputLimitRecoveryService,
-  OUTPUT_LIMIT_RECOVERY_FLAG_ID,
   OUTPUT_LIMIT_RECOVERY_VARIANT,
 } from './outputLimitRecovery';
 
@@ -33,7 +31,6 @@ export class AgentOutputLimitRecoveryService
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
-    @IFlagService private readonly flags: IFlagService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
@@ -51,7 +48,7 @@ export class AgentOutputLimitRecoveryService
       this.recoveries = 0;
       return;
     }
-    if (!this.flags.enabled(OUTPUT_LIMIT_RECOVERY_FLAG_ID) || ctx.finishReason !== 'truncated') {
+    if (ctx.finishReason !== 'truncated') {
       return;
     }
     const message = this.context.get().findLast((entry) => entry.role === 'assistant');

@@ -12,8 +12,6 @@ import { createTestAgent, type TestAgentContext } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { submitPromptTurn } from '../loop/stubs';
 
-const ENABLED_CONFIG = { experimental: { output_limit_recovery: true } } as const;
-
 describe('output-limit recovery', () => {
   let ctx: TestAgentContext;
   let loop: IAgentLoopService;
@@ -23,7 +21,6 @@ describe('output-limit recovery', () => {
   beforeEach(async () => {
     records = [];
     ctx = createTestAgent({
-      initialConfig: ENABLED_CONFIG,
       telemetry: recordingTelemetry(records),
     });
     await ctx.restorePersisted();
@@ -55,51 +52,6 @@ describe('output-limit recovery', () => {
       .map((part) => (part.type === 'text' ? part.text : ''))
       .join('');
   }
-
-  it('keeps the existing partial-text completion when the flag is off', async () => {
-    const local = createTestAgent();
-    try {
-      await local.restorePersisted();
-      const localLoop = local.get(IAgentLoopService);
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
-      local.mockNextProviderResponse({
-        parts: [{ type: 'text', text: 'partial answer' }],
-        finishReason: 'truncated',
-        rawFinishReason: 'length',
-      });
-
-      const { turn } = submitTurn(localLoop, 'Hello');
-      await local.untilTurnEnd();
-
-      await expect(turn.result).resolves.toEqual({ type: 'completed', steps: 1, truncated: true });
-      expect(local.llmCalls).toHaveLength(1);
-    } finally {
-      await local.dispose();
-    }
-  });
-
-  it('keeps the empty-response failure when the flag is off', async () => {
-    const local = createTestAgent({ initialConfig: { loopControl: { maxAttemptsPerStep: 1 } } });
-    try {
-      await local.restorePersisted();
-      const localLoop = local.get(IAgentLoopService);
-      local.get(IAgentProfileService).update({ activeToolNames: [] });
-      local.mockNextProviderResponse({
-        parts: [{ type: 'think', think: 'unfinished thought' }],
-        finishReason: 'truncated',
-        rawFinishReason: 'length',
-      });
-
-      const { turn } = submitTurn(localLoop, 'Hello');
-      await local.untilTurnEnd();
-
-      const result = await turn.result;
-      expect(result.type).toBe('failed');
-      expect(local.llmCalls).toHaveLength(1);
-    } finally {
-      await local.dispose();
-    }
-  });
 
   it('continues a think-only truncation with the reminder and preserved history', async () => {
     ctx.mockNextProviderResponse({
@@ -165,7 +117,6 @@ describe('output-limit recovery', () => {
   it('fails after three recovery steps and reports actions without response content', async () => {
     const records: TelemetryRecord[] = [];
     const local = createTestAgent({
-      initialConfig: ENABLED_CONFIG,
       telemetry: recordingTelemetry(records),
     });
     try {
@@ -219,7 +170,6 @@ describe('output-limit recovery', () => {
   it('allows recovery steps past maxSteps', async () => {
     const local = createTestAgent({
       initialConfig: {
-        ...ENABLED_CONFIG,
         loopControl: { maxStepsPerTurn: 1 },
       },
     });

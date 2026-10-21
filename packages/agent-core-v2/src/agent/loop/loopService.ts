@@ -22,8 +22,6 @@ import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
-import { OUTPUT_LIMIT_RECOVERY_FLAG_ID } from '#/agent/outputLimitRecovery/outputLimitRecovery';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { type FinishReason } from '#human/llm/finish-reason';
 import { mergeInPlace } from '#/llm-adapter/contract/message';
@@ -170,7 +168,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IConfigService private readonly config: IConfigService,
-    @IFlagService private readonly flags: IFlagService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
@@ -216,7 +213,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       toolExecutor: this.toolExecutor,
       toolInfos: () => this.toolRegistry.list(),
       maxAttemptsPerStep: this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep,
-      allowTruncatedThinkOnly: this.flags.enabled(OUTPUT_LIMIT_RECOVERY_FLAG_ID),
+      allowTruncatedThinkOnly: true,
       initialTurnId: this.states.get(turnKey).nextTurnId,
       journal: wireStoreJournal(this.wire, ENGINE_JOURNAL_DOMAIN),
       trace: () => this.activeRequestTrace,
