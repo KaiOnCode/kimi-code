@@ -93,11 +93,7 @@ export class CloudTransport {
     const endpoint = this.currentEndpoint();
     if (this.endpointForRegion !== undefined) {
       const partition = partitionEvents(events, endpoint, this.endpointForRegion, false);
-      if (partition.deferred.length > 0) {
-        try {
-          await this.saveToDisk(partition.deferred);
-        } catch {}
-      }
+      if (partition.deferred.length > 0) await this.saveToDisk(partition.deferred);
       events = partition.sendable;
     }
     if (events.length === 0 || endpoint === undefined) return;
@@ -181,10 +177,9 @@ export class CloudTransport {
         const partition = partitionEvents(events, endpoint, this.endpointForRegion, true);
         events = partition.sendable;
         deferred = partition.deferred;
+        if (deferred.length > 0) continue;
         if (events.length === 0) {
-          if (deferred.length === 0) {
-            await this.storage.delete(TELEMETRY_SCOPE, key).catch(() => undefined);
-          }
+          await this.storage.delete(TELEMETRY_SCOPE, key).catch(() => undefined);
           continue;
         }
       }
@@ -202,7 +197,6 @@ export class CloudTransport {
 
       try {
         await this.sendHttp(payload, undefined, endpoint);
-        if (deferred.length > 0) await this.saveToDisk(deferred);
         await this.storage.delete(TELEMETRY_SCOPE, key);
       } catch (error) {
         if (error instanceof TransientCloudError) continue;

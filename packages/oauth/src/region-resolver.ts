@@ -73,7 +73,11 @@ export function createKimiRegionResolver(
       readMarker: options.readMarker,
     });
     if (explicit.source === 'env') return explicit;
-    if (auth.status === 'unknown') return { region: 'mainland-cn', source: 'default' };
+    if (auth.status === 'unknown') {
+      return explicit.source === 'marker'
+        ? explicit
+        : { region: 'mainland-cn', source: 'default' };
+    }
     if (auth.status === 'logged-in') {
       clearKimiRegionCache(options.homeDir);
       return explicit;

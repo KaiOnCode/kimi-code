@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -395,7 +395,7 @@ describe('CloudAppender', () => {
     expect(seenAuths).toEqual(['Bearer tok', undefined]);
   });
 
-  it('retryDiskEvents resends saved events and removes the file on success', async () => {
+  it('retries disk events and requeues failed deferred writes', async () => {
     let shouldFail = true;
     const appender = new CloudAppender(
       baseOptions({
@@ -415,6 +415,47 @@ describe('CloudAppender', () => {
     expect(
       readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_')),
     ).toHaveLength(0);
+
+    const storage = new FileStorageService(homeDir);
+    const write = storage.write.bind(storage);
+    let failWrite = true;
+    storage.write = async (scope, key, data) => {
+      if (failWrite) throw new Error('disk full');
+      return write(scope, key, data);
+    };
+    let region: 'mainland-cn' | 'global' = 'mainland-cn';
+    const requests: CapturedRequest[] = [];
+    const mixed = new CloudAppender(
+      baseOptions({
+        homeDir,
+        storage,
+        resolveRegion: () => ({ region, source: 'login' }),
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return okResponse();
+        }),
+      }),
+    );
+    mixed.track({ event: 'cn-event', context: {}, properties: {} });
+    region = 'global';
+    mixed.track({ event: 'global-event', context: {}, properties: {} });
+    await expect(mixed.flush()).rejects.toThrow('disk full');
+
+    failWrite = false;
+    await mixed.flush();
+    expect(requests).toHaveLength(0);
+    const deferred = readdirSync(join(homeDir, 'telemetry')).filter((f) =>
+      f.startsWith('failed_'),
+    );
+    expect(deferred).toHaveLength(1);
+    expect(readFileSync(join(homeDir, 'telemetry', deferred[0]!), 'utf-8')).toContain(
+      'cn-event',
+    );
+    region = 'mainland-cn';
+    await mixed.retryDiskEvents();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.body.events.map((event) => event['event'])).toEqual(['kfc_cn-event']);
+    expect(readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_'))).toHaveLength(0);
   });
 
   it('drops null values from the outbound payload', async () => {

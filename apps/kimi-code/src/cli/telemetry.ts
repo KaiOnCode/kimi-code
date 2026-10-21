@@ -121,7 +121,7 @@ export function initializeServerTelemetry(
     model: config.defaultModel,
     region: resolution.region,
     regionSource: resolution.source,
-    resolveRegion: () => resolveKimiRegionFresh(),
+    resolveRegion: () => currentKimiRegionResolution(),
     endpoint: () => freshKimiProfile().telemetryEndpoint,
     endpointForRegion: (region) => KIMI_REGION_PROFILES[region].telemetryEndpoint,
     getAccessToken: async () => (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,

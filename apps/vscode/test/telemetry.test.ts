@@ -29,9 +29,10 @@ const host = vi.hoisted(() => {
     track: vi.fn(),
     shutdownTelemetry: vi.fn(async () => undefined),
     installCrashHandlers: vi.fn(),
+    currentRegion: vi.fn(() => ({ region: "global" as const, source: "login" as const })),
     refreshRegion: vi.fn(() => ({ region: "global" as const, source: "login" as const })),
     createKimiRegionResolver: vi.fn(() => ({
-      current: host.refreshRegion,
+      current: host.currentRegion,
       refresh: host.refreshRegion,
     })),
     loadRuntimeConfigSafe: vi.fn(() => ({
@@ -155,7 +156,10 @@ describe("extension telemetry composition root", () => {
   it("resolves the endpoint through the region resolver per flush", () => {
     activate();
 
-    const endpoint = initializeOptions()["endpoint"] as () => string;
+    const options = initializeOptions();
+    (options["resolveRegion"] as () => unknown)();
+    expect(host.currentRegion).toHaveBeenCalled();
+    const endpoint = options["endpoint"] as () => string;
     expect(endpoint()).toBe("https://telemetry-logs.example.net/v1/event");
     expect(host.createKimiRegionResolver).toHaveBeenCalledWith(
       expect.objectContaining({

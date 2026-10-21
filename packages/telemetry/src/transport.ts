@@ -76,11 +76,7 @@ export class AsyncTransport {
     const endpoint = this.resolvedEndpoint();
     if (this.endpointForRegion !== undefined) {
       const partition = partitionEvents(events, endpoint, this.endpointForRegion, false);
-      if (partition.deferred.length > 0) {
-        try {
-          this.saveToDisk(partition.deferred);
-        } catch {}
-      }
+      if (partition.deferred.length > 0) this.saveToDisk(partition.deferred);
       events = partition.sendable;
     }
     if (events.length === 0 || endpoint === undefined) return;
@@ -184,8 +180,9 @@ export class AsyncTransport {
         const partition = partitionEvents(events, endpoint, this.endpointForRegion, true);
         events = partition.sendable;
         deferred = partition.deferred;
+        if (deferred.length > 0) continue;
         if (events.length === 0) {
-          if (deferred.length === 0) unlinkSync(path);
+          unlinkSync(path);
           continue;
         }
       }
@@ -207,7 +204,6 @@ export class AsyncTransport {
 
       try {
         await this.sendHttp(payload, undefined, endpoint);
-        if (deferred.length > 0) this.saveToDisk(deferred);
         unlinkSync(path);
       } catch (error) {
         if (error instanceof TransientTelemetryError) continue;

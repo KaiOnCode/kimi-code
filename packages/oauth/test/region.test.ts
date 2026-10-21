@@ -158,6 +158,11 @@ describe('resolveKimiRegion', () => {
     expect(resolver.current()).toEqual({ region: 'mainland-cn', source: 'default' });
     expect(collections).toBe(0);
     await expect(readFile(cacheFile, 'utf-8')).rejects.toThrow();
+    await writeFile(join(dir, KIMI_REGION_MARKER_FILENAME), 'global\n', 'utf-8');
+    resolver = makeResolver();
+    expect(resolver.current()).toEqual({ region: 'global', source: 'marker' });
+    expect(collections).toBe(0);
+    await writeFile(join(dir, KIMI_REGION_MARKER_FILENAME), 'apac', 'utf-8');
 
     auth = { status: 'logged-out' };
     expect(resolver.refresh()).toEqual({ region: 'global', source: 'local-signals' });

@@ -32,11 +32,22 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showSubscribeDialog, setShowSubscribeDialog] = useState(false);
+  const [siteBase, setSiteBase] = useState("https://www.kimi.com");
 
   useEffect(() => {
     return bridge.on<{ url: string }>(Events.LoginUrl, ({ url }) => {
       setUrl(url);
     });
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void bridge.checkLoginStatus().then((status) => {
+      if (active) setSiteBase(status.siteBase);
+    }).catch(() => {});
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleLogin = async () => {
@@ -69,15 +80,9 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
     }
   };
 
-  const handleSubscribe = async () => {
-    try {
-      const status = await bridge.checkLoginStatus();
-      window.open(`${status.siteBase}/code`, "_blank");
-    } catch {
-      window.open("https://www.kimi.com/code", "_blank");
-    } finally {
-      setShowSubscribeDialog(false);
-    }
+  const handleSubscribe = () => {
+    window.open(`${siteBase}/code`, "_blank");
+    setShowSubscribeDialog(false);
   };
 
   const handleCopyUrl = async () => {
@@ -178,13 +183,7 @@ export function LoginScreen({ onLoginSuccess, onSkip }: LoginScreenProps) {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setShowSubscribeDialog(false)}>Skip</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                void handleSubscribe();
-              }}
-            >
-              Subscribe
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleSubscribe}>Subscribe</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

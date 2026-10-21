@@ -40,8 +40,8 @@ export function activateExtensionTelemetry(options: ExtensionTelemetryOptions): 
   const configPath = resolveConfigPath({ homeDir });
   const config = readTelemetryConfig(configPath);
   const auth = new KimiAuthFacade({ homeDir, configPath });
-  const resolveRegion = () => resolveExtensionRegion({ homeDir, refresh: true });
-  const resolution = resolveRegion();
+  const resolveRegion = () => resolveExtensionRegion({ homeDir });
+  const resolution = resolveExtensionRegion({ homeDir, refresh: true });
 
   initializeTelemetry({
     homeDir,
@@ -55,7 +55,10 @@ export function activateExtensionTelemetry(options: ExtensionTelemetryOptions): 
     region: resolution.region,
     regionSource: resolution.source,
     resolveRegion,
-    endpoint: () => KIMI_REGION_PROFILES[resolveRegion().region].telemetryEndpoint,
+    endpoint: () =>
+      KIMI_REGION_PROFILES[
+        resolveExtensionRegion({ homeDir, refresh: true }).region
+      ].telemetryEndpoint,
     endpointForRegion: (region) => KIMI_REGION_PROFILES[region].telemetryEndpoint,
     getAccessToken: async () => (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
     onUnexpectedError: (error) => options.log(`Telemetry dropped a property: ${error.message}`),
