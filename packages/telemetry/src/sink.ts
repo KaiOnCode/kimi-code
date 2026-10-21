@@ -1,5 +1,6 @@
 import { arch, platform, release } from 'node:os';
 
+import { TelemetryBatchError } from './transport';
 import type {
   EnrichedTelemetryEvent,
   TelemetryContext,
@@ -103,7 +104,8 @@ export class EventSink {
     try {
       await this.transport.send(events, signal);
     } catch (error) {
-      this.buffer = [...events, ...this.buffer];
+      const requeue = error instanceof TelemetryBatchError ? error.events : events;
+      this.buffer = [...requeue, ...this.buffer];
       throw error;
     }
   }

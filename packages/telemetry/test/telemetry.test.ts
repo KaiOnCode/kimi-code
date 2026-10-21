@@ -29,6 +29,7 @@ import {
   DISK_EVENT_MAX_AGE_MS,
   RETRY_BACKOFFS_MS,
   SERVER_EVENT_PREFIX,
+  TelemetryBatchError,
   TransientTelemetryError,
   USER_ID_PREFIX,
   applyServerPrefix,
@@ -785,6 +786,33 @@ describe('AsyncTransport', () => {
       ]),
     ).rejects.toThrow();
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+
+    const batchTransport = new AsyncTransport({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      endpoint: 'https://cn.test/events',
+      endpointForRegion: (region) =>
+        region === 'global' ? 'https://global.test/events' : 'https://cn.test/events',
+      fetchImpl: vi.fn(async () => new Response('', { status: 500 })) as unknown as typeof fetch,
+      retryBackoffsMs: [],
+    });
+    let writes = 0;
+    batchTransport.saveToDisk = () => {
+      writes += 1;
+      if (writes === 2) throw new Error('disk full');
+    };
+    await expect(
+      batchTransport.send([
+        { ...sampleEvent('deferred-global'), context: { region: 'global' } },
+        { ...sampleEvent('sendable-cn'), context: { region: 'mainland-cn' } },
+      ]),
+    ).rejects.toSatisfy(
+      (error) =>
+        error instanceof TelemetryBatchError &&
+        error.events.length === 1 &&
+        error.events[0]?.context['region'] === 'mainland-cn',
+    );
+    expect(writes).toBe(2);
   });
 
   it('retries anonymously on 401 with a token', async () => {

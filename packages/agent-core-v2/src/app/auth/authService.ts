@@ -128,7 +128,15 @@ export class OAuthService extends Disposable implements IOAuthService {
     options: OAuthLoginOptions = {},
   ): Promise<OAuthFlowStart> {
     this.log.info('oauth startLogin: enter', { provider });
-    const loginAuth = this.resolveLoginAuth(provider, options.region);
+    const configured = this.providerService.get(provider);
+    const region =
+      options.region ??
+      (provider === KIMI_CODE_PROVIDER_NAME &&
+      configured?.oauth === undefined &&
+      configured?.baseUrl === undefined
+        ? await this.regionService.getRegionAsync()
+        : undefined);
+    const loginAuth = this.resolveLoginAuth(provider, region);
     this.log.info('oauth startLogin: resolved login auth', {
       provider,
       hasOAuthRef: loginAuth.oauthRef !== undefined,

@@ -427,32 +427,40 @@ describe('OAuthService', () => {
     );
   });
 
-  it('startLogin with region global resolves the global login environment', async () => {
+  it('startLogin without a region resolves the hydrated login environment', async () => {
     stubManagedModelsFetch();
     toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
       return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
     });
-    const svc = createService();
-    await svc.startLogin(OAUTH_PROVIDER, { region: 'global' });
+    const home = ix.get(IBootstrapService).homeDir;
+    providers[OAUTH_PROVIDER] = { type: 'kimi' };
+    try {
+      await mkdir(home, { recursive: true });
+      await writeFile(join(home, 'region'), 'global\n', 'utf-8');
+      const svc = createService();
+      await svc.startLogin(OAUTH_PROVIDER);
 
-    expect(toolkit.login).toHaveBeenCalledWith(
-      OAUTH_PROVIDER,
-      expect.objectContaining({
-        oauthRef: OVERSEAS_SCOPED_REF,
-        baseUrl: 'https://api.kimi.ai/coding/v1',
-        oauthHost: 'https://auth.kimi.ai',
-      }),
-    );
-    await flush();
-    expect(providerSet).toHaveBeenCalledWith(
-      OAUTH_PROVIDER,
-      expect.objectContaining({
-        type: 'kimi',
-        baseUrl: 'https://api.kimi.ai/coding/v1',
-        oauth: OVERSEAS_SCOPED_REF,
-      }),
-    );
+      expect(toolkit.login).toHaveBeenCalledWith(
+        OAUTH_PROVIDER,
+        expect.objectContaining({
+          oauthRef: OVERSEAS_SCOPED_REF,
+          baseUrl: 'https://api.kimi.ai/coding/v1',
+          oauthHost: 'https://auth.kimi.ai',
+        }),
+      );
+      await flush();
+      expect(providerSet).toHaveBeenCalledWith(
+        OAUTH_PROVIDER,
+        expect.objectContaining({
+          type: 'kimi',
+          baseUrl: 'https://api.kimi.ai/coding/v1',
+          oauth: OVERSEAS_SCOPED_REF,
+        }),
+      );
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it('startLogin with a region still honors env endpoint overrides', async () => {

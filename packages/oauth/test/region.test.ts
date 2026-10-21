@@ -183,8 +183,19 @@ describe('resolveKimiRegion', () => {
       status: 'logged-in',
       ref: { key: 'global', oauthHost: 'https://auth.kimi.ai' },
     };
-    expect(resolver.refresh()).toEqual({ region: 'global', source: 'login' });
+    resolver = createKimiRegionResolver({
+      env: { KIMI_CODE_OAUTH_HOST: 'https://auth.kimi.ai' },
+      homeDir: dir,
+      readAuth: () => auth,
+      collectSignals: () => {
+        collections += 1;
+        return signals;
+      },
+    });
+    expect(resolver.current()).toEqual({ region: 'global', source: 'env' });
     await expect(readFile(cacheFile, 'utf-8')).rejects.toThrow();
+    resolver = makeResolver();
+    expect(resolver.refresh()).toEqual({ region: 'global', source: 'login' });
     auth = { status: 'logged-in', ref: { key: KIMI_CODE_OAUTH_KEY } };
     expect(resolver.refresh()).toEqual({ region: 'mainland-cn', source: 'login' });
     auth = {

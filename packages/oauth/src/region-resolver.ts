@@ -72,16 +72,14 @@ export function createKimiRegionResolver(
       homeDir: options.homeDir,
       readMarker: options.readMarker,
     });
+    if (auth.status === 'logged-in') clearKimiRegionCache(options.homeDir);
     if (explicit.source === 'env') return explicit;
     if (auth.status === 'unknown') {
       return explicit.source === 'marker'
         ? explicit
         : { region: 'mainland-cn', source: 'default' };
     }
-    if (auth.status === 'logged-in') {
-      clearKimiRegionCache(options.homeDir);
-      return explicit;
-    }
+    if (auth.status === 'logged-in') return explicit;
     if (
       explicit.source === 'marker' ||
       options.readMarker === false ||

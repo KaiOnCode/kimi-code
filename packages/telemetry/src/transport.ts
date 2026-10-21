@@ -83,8 +83,12 @@ export class AsyncTransport {
     let savedToDisk = false;
     const saveEventsToDisk = (): void => {
       if (savedToDisk) return;
-      this.saveToDisk(events);
-      savedToDisk = true;
+      try {
+        this.saveToDisk(events);
+        savedToDisk = true;
+      } catch (error) {
+        throw new TelemetryBatchError(events, { cause: error });
+      }
     };
     if (signal?.aborted === true) {
       saveEventsToDisk();
@@ -296,6 +300,17 @@ function partitionEvents(
     else deferred.push(event);
   }
   return { sendable, deferred };
+}
+
+export class TelemetryBatchError extends Error {
+  override readonly name = 'TelemetryBatchError';
+
+  constructor(
+    readonly events: readonly EnrichedTelemetryEvent[],
+    options?: ErrorOptions,
+  ) {
+    super('telemetry batch could not be persisted', options);
+  }
 }
 
 export class TransientTelemetryError extends Error {

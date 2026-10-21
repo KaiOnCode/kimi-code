@@ -18,6 +18,7 @@ import {
   type CloudContext,
   type CloudPrimitive,
   type CloudProperties,
+  CloudBatchError,
   CloudTransport,
   type EnrichedCloudEvent,
   isCloudPrimitive,
@@ -155,7 +156,8 @@ export class CloudAppender implements ITelemetryAppender {
     try {
       await this.transport.send(events);
     } catch (error) {
-      this.buffer = [...events, ...this.buffer];
+      const requeue = error instanceof CloudBatchError ? error.events : events;
+      this.buffer = [...requeue, ...this.buffer];
       throw error;
     }
   }

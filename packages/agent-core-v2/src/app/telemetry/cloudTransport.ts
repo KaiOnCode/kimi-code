@@ -100,8 +100,12 @@ export class CloudTransport {
     let savedToDisk = false;
     const saveEventsToDisk = async (): Promise<void> => {
       if (savedToDisk) return;
-      await this.saveToDisk(events);
-      savedToDisk = true;
+      try {
+        await this.saveToDisk(events);
+        savedToDisk = true;
+      } catch (error) {
+        throw new CloudBatchError(events, { cause: error });
+      }
     };
     if (signal?.aborted === true) {
       await saveEventsToDisk();
@@ -300,6 +304,17 @@ function parseFailedTimestamp(key: string): number | undefined {
   const raw = rest.slice(0, underscore);
   const ts = Number(raw);
   return Number.isFinite(ts) ? ts : undefined;
+}
+
+export class CloudBatchError extends Error {
+  override readonly name = 'CloudBatchError';
+
+  constructor(
+    readonly events: readonly EnrichedCloudEvent[],
+    options?: ErrorOptions,
+  ) {
+    super('cloud telemetry batch could not be persisted', options);
+  }
 }
 
 export class TransientCloudError extends Error {

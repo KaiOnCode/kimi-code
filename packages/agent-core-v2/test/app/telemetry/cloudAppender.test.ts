@@ -11,6 +11,7 @@ import {
 } from '#/_base/errors/unexpectedError';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { CloudAppender, type CloudAppenderOptions } from '#/app/telemetry/cloudAppender';
+import { CloudBatchError, CloudTransport } from '#/app/telemetry/cloudTransport';
 
 import { stubBootstrap, stubClientIdentity } from '../bootstrap/stubs';
 
@@ -456,6 +457,50 @@ describe('CloudAppender', () => {
     expect(requests).toHaveLength(1);
     expect(requests[0]?.body.events.map((event) => event['event'])).toEqual(['kfc_cn-event']);
     expect(readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_'))).toHaveLength(0);
+
+    const cloudTransport = new CloudTransport({
+      storage,
+      deviceId: 'dev',
+      resolveEndpoint: () => 'https://mock.test/events',
+      endpointForRegion: (region) =>
+        region === 'global' ? 'https://global.test/events' : 'https://mock.test/events',
+      fetchImpl: makeFetch(() => statusResponse(500)),
+      retryBackoffsMs: [],
+    });
+    let cloudWrites = 0;
+    storage.write = async (scope, key, data) => {
+      cloudWrites += 1;
+      if (cloudWrites === 2) throw new Error('disk full');
+      return write(scope, key, data);
+    };
+    await expect(
+      cloudTransport.send([
+        {
+          event_id: 'cn',
+          device_id: 'dev',
+          session_id: null,
+          event: 'cn-event',
+          timestamp: 1,
+          properties: {},
+          context: { region: 'mainland-cn' },
+        },
+        {
+          event_id: 'global',
+          device_id: 'dev',
+          session_id: null,
+          event: 'global-event',
+          timestamp: 1,
+          properties: {},
+          context: { region: 'global' },
+        },
+      ]),
+    ).rejects.toSatisfy(
+      (error) =>
+        error instanceof CloudBatchError &&
+        error.events.length === 1 &&
+        error.events[0]?.context['region'] === 'mainland-cn',
+    );
+    expect(cloudWrites).toBe(2);
   });
 
   it('drops null values from the outbound payload', async () => {
