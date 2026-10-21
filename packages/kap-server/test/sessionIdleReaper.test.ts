@@ -38,9 +38,6 @@ describe('SessionIdleReaper', () => {
     expect(resolveSessionIdleReclaimMs({})).toBe(DEFAULT_SESSION_IDLE_RECLAIM_MS);
     expect(resolveSessionIdleReclaimMs({ [SESSION_IDLE_RECLAIM_ENV]: '5000' })).toBe(5000);
     expect(resolveSessionIdleReclaimMs({ [SESSION_IDLE_RECLAIM_ENV]: '0' })).toBe(0);
-    expect(resolveSessionIdleReclaimMs({ [SESSION_IDLE_RECLAIM_ENV]: 'nope' })).toBe(
-      DEFAULT_SESSION_IDLE_RECLAIM_MS,
-    );
 
     vi.useFakeTimers();
     try {
@@ -51,6 +48,14 @@ describe('SessionIdleReaper', () => {
       expect(calls).toEqual([]);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('throws for negative, non-integer, or non-numeric values', () => {
+    for (const raw of ['-1', '0.5', 'nope']) {
+      expect(() => resolveSessionIdleReclaimMs({ [SESSION_IDLE_RECLAIM_ENV]: raw })).toThrow(
+        /KIMI_CODE_SESSION_IDLE_RECLAIM_MS.*non-negative integer/,
+      );
     }
   });
 

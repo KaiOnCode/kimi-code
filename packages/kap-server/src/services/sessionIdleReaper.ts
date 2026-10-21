@@ -1,4 +1,4 @@
-import type { ISessionManager } from '@moonshot-ai/agent-core-v2';
+import { Error2, ErrorCodes, type ISessionManager } from '@moonshot-ai/agent-core-v2';
 
 import type { ServerLogger } from './pinoLoggerService';
 
@@ -8,11 +8,16 @@ const SWEEP_INTERVAL_MS = 60_000;
 
 export function resolveSessionIdleReclaimMs(env: NodeJS.ProcessEnv): number {
   const raw = env[SESSION_IDLE_RECLAIM_ENV];
-  if (raw !== undefined && raw.trim().length > 0) {
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  if (raw === undefined || raw.trim().length === 0) return DEFAULT_SESSION_IDLE_RECLAIM_MS;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error2(
+      ErrorCodes.VALIDATION_FAILED,
+      `${SESSION_IDLE_RECLAIM_ENV} must be a non-negative integer, got ${JSON.stringify(raw)}.`,
+      { details: { value: raw } },
+    );
   }
-  return DEFAULT_SESSION_IDLE_RECLAIM_MS;
+  return parsed;
 }
 
 export class SessionIdleReaper {
