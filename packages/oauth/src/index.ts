@@ -51,14 +51,27 @@ export {
   kimiRegionProfile,
   kimiRegionSchema,
   resolveKimiRegion,
+  resolveKimiRegionDetailed,
   resolveKimiRemoteControlAuth,
 } from './region';
 export type {
   KimiRegion,
   KimiRegionProfile,
+  KimiRegionResolution,
+  KimiRegionSource,
   KimiRemoteControlAuth,
   ResolveKimiRegionOptions,
 } from './region';
+
+export { createKimiRegionResolver } from './region-resolver';
+export type {
+  CreateKimiRegionResolverOptions,
+  KimiRegionAuthSnapshot,
+  KimiRegionResolver,
+} from './region-resolver';
+
+export { collectLocalRegionSignals, detectKimiRegionFromLocalSignals } from './region-local';
+export type { LocalRegionDetection, LocalRegionSignals } from './region-local';
 
 export {
   applyManagedApiKeyProviderModels,

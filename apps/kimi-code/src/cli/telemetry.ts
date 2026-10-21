@@ -1,4 +1,8 @@
-import { createKimiDeviceId, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
+import {
+  createKimiDeviceId,
+  KIMI_CODE_PROVIDER_NAME,
+  KIMI_REGION_PROFILES,
+} from '@moonshot-ai/kimi-code-oauth';
 import {
   KimiAuthFacade,
   loadRuntimeConfigSafe,
@@ -18,7 +22,12 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 
 import { CLI_USER_AGENT_PRODUCT, WEB_UI_MODE } from '#/constant/app';
-import { currentKimiProfile } from '#/utils/region';
+import {
+  currentKimiProfile,
+  currentKimiRegionResolution,
+  freshKimiProfile,
+  resolveKimiRegionFresh,
+} from '#/utils/region';
 
 import { createKimiCodeHostIdentity } from './version';
 
@@ -50,6 +59,7 @@ export function createCliTelemetryBootstrap(): CliTelemetryBootstrap {
 }
 
 export function initializeCliTelemetry(options: InitializeCliTelemetryOptions): void {
+  const resolution = currentKimiRegionResolution();
   initializeTelemetry({
     homeDir: options.harness.homeDir,
     deviceId: options.bootstrap.deviceId,
@@ -59,7 +69,11 @@ export function initializeCliTelemetry(options: InitializeCliTelemetryOptions): 
     uiMode: options.uiMode,
     model: options.model ?? options.config.defaultModel,
     sessionId: options.sessionId,
+    region: resolution.region,
+    regionSource: resolution.source,
+    resolveRegion: () => currentKimiRegionResolution(),
     endpoint: () => currentKimiProfile().telemetryEndpoint,
+    endpointForRegion: (region) => KIMI_REGION_PROFILES[region].telemetryEndpoint,
     getAccessToken: async () =>
       (await options.harness.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
     onUnexpectedError: (error) => log.warn('telemetry property dropped', { error: String(error) }),
@@ -96,6 +110,7 @@ export function initializeServerTelemetry(
     identity: createKimiCodeHostIdentity(options.version),
   });
 
+  const resolution = resolveKimiRegionFresh();
   initializeTelemetry({
     homeDir: bootstrap.homeDir,
     deviceId: bootstrap.deviceId,
@@ -104,7 +119,11 @@ export function initializeServerTelemetry(
     version: options.version,
     uiMode: WEB_UI_MODE,
     model: config.defaultModel,
-    endpoint: () => currentKimiProfile().telemetryEndpoint,
+    region: resolution.region,
+    regionSource: resolution.source,
+    resolveRegion: () => resolveKimiRegionFresh(),
+    endpoint: () => freshKimiProfile().telemetryEndpoint,
+    endpointForRegion: (region) => KIMI_REGION_PROFILES[region].telemetryEndpoint,
     getAccessToken: async () => (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
     onUnexpectedError: (error) => log.warn('telemetry property dropped', { error: String(error) }),
   });

@@ -176,27 +176,44 @@ function defaultHomeDir(env: NodeJS.ProcessEnv): string {
   return join(homedir(), '.kimi-code');
 }
 
-export function resolveKimiRegion(options: ResolveKimiRegionOptions = {}): KimiRegion {
+export type KimiRegionSource =
+  | 'env'
+  | 'login'
+  | 'marker'
+  | 'local-signals'
+  | 'fallback'
+  | 'default';
+
+export interface KimiRegionResolution {
+  readonly region: KimiRegion;
+  readonly source: KimiRegionSource;
+}
+
+export function resolveKimiRegionDetailed(
+  options: ResolveKimiRegionOptions = {},
+): KimiRegionResolution {
   const env = options.env ?? process.env;
-  // An env host that matches a profile pins the region. An unknown env host
-  // means a custom/internal environment: the per-endpoint env overrides keep
-  // doing their job regardless of region, so skip straight to the default
-  // instead of letting a stale config/marker point CDN links somewhere odd.
   const envHost = env['KIMI_CODE_OAUTH_HOST'] ?? env['KIMI_OAUTH_HOST'];
   if (envHost !== undefined && envHost.length > 0) {
-    return regionForOAuthHost(envHost) ?? 'mainland-cn';
+    return { region: regionForOAuthHost(envHost) ?? 'mainland-cn', source: 'env' };
   }
   const configured = options.configuredOAuthHost;
   if (configured !== undefined && configured.length > 0) {
     const configuredRegion = regionForOAuthHost(configured);
-    if (configuredRegion !== undefined) return configuredRegion;
+    if (configuredRegion !== undefined) return { region: configuredRegion, source: 'login' };
   }
-  if (options.configuredOAuthKey === KIMI_CODE_OAUTH_KEY) return 'mainland-cn';
+  if (options.configuredOAuthKey === KIMI_CODE_OAUTH_KEY) {
+    return { region: 'mainland-cn', source: 'login' };
+  }
   if (options.readMarker !== false) {
     const markerRegion = readRegionMarker(options.homeDir ?? defaultHomeDir(env));
-    if (markerRegion !== undefined) return markerRegion;
+    if (markerRegion !== undefined) return { region: markerRegion, source: 'marker' };
   }
-  return 'mainland-cn';
+  return { region: 'mainland-cn', source: 'default' };
+}
+
+export function resolveKimiRegion(options: ResolveKimiRegionOptions = {}): KimiRegion {
+  return resolveKimiRegionDetailed(options).region;
 }
 
 export interface KimiRemoteControlAuth {

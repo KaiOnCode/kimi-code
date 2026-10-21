@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -6,6 +6,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_KIMI_CODE_OAUTH_HOST } from '#/constants';
 import { KIMI_CODE_OAUTH_KEY } from '#/managed-kimi-code';
 import { DEFAULT_KIMI_CODE_BASE_URL } from '#/managed-usage';
+import { KIMI_REGION_CACHE_FILENAME } from '#/region-cache';
+import { detectKimiRegionFromLocalSignals } from '#/region-local';
+import {
+  createKimiRegionResolver,
+  type KimiRegionAuthSnapshot,
+} from '#/region-resolver';
 import {
   KIMI_REGION_MARKER_FILENAME,
   KIMI_REGION_PROFILES,
@@ -52,8 +58,28 @@ describe('resolveKimiRegion', () => {
     return workDir.path;
   }
 
-  it('defaults to mainland-cn when nothing points anywhere', async () => {
-    expect(resolveKimiRegion({ env: {}, homeDir: await markerDir() })).toBe('mainland-cn');
+  it('detects region from consistent local signals and falls back on ambiguity', () => {
+    expect(
+      detectKimiRegionFromLocalSignals({ timeZone: 'Asia/Shanghai', locale: 'zh-Hans-CN' }),
+    ).toEqual({ region: 'mainland-cn', confident: true });
+    expect(
+      detectKimiRegionFromLocalSignals({ timeZone: 'America/New_York', locale: 'en-US' }),
+    ).toEqual({ region: 'global', confident: true });
+    expect(detectKimiRegionFromLocalSignals({ timeZone: 'Asia/Taipei', locale: 'zh-Hant-TW' })).toEqual({
+      region: 'global',
+      confident: true,
+    });
+    expect(detectKimiRegionFromLocalSignals({ timeZone: 'UTC', locale: 'zh-CN' })).toEqual({
+      region: 'mainland-cn',
+      confident: true,
+    });
+    expect(detectKimiRegionFromLocalSignals({})).toEqual({
+      region: 'mainland-cn',
+      confident: false,
+    });
+    expect(
+      detectKimiRegionFromLocalSignals({ timeZone: 'Asia/Shanghai', locale: 'en-US' }),
+    ).toEqual({ region: 'mainland-cn', confident: false });
   });
 
   it('resolves a known env oauth host, KIMI_CODE_OAUTH_HOST first', () => {
@@ -107,9 +133,91 @@ describe('resolveKimiRegion', () => {
     expect(resolveKimiRegion({ env: {}, homeDir: await markerDir('  mainland-cn  ') })).toBe('mainland-cn');
   });
 
-  it('ignores a malformed or missing marker', async () => {
-    expect(resolveKimiRegion({ env: {}, homeDir: await markerDir('apac') })).toBe('mainland-cn');
-    expect(resolveKimiRegion({ env: {}, homeDir: await markerDir('') })).toBe('mainland-cn');
+  it('reconciles auth state, persistent cache, and transient fallback', async () => {
+    const dir = await markerDir('apac');
+    expect(resolveKimiRegion({ env: {}, homeDir: dir })).toBe('mainland-cn');
+    let auth: KimiRegionAuthSnapshot = { status: 'unknown' };
+    let signals: { readonly timeZone?: string; readonly locale?: string } = {
+      timeZone: 'America/New_York',
+      locale: 'en-US',
+    };
+    let collections = 0;
+    const makeResolver = () =>
+      createKimiRegionResolver({
+        env: {},
+        homeDir: dir,
+        readAuth: () => auth,
+        collectSignals: () => {
+          collections += 1;
+          return signals;
+        },
+      });
+    let resolver = makeResolver();
+    const cacheFile = join(dir, KIMI_REGION_CACHE_FILENAME);
+
+    expect(resolver.current()).toEqual({ region: 'mainland-cn', source: 'default' });
+    expect(collections).toBe(0);
+    await expect(readFile(cacheFile, 'utf-8')).rejects.toThrow();
+
+    auth = { status: 'logged-out' };
+    expect(resolver.refresh()).toEqual({ region: 'global', source: 'local-signals' });
+    expect(collections).toBe(1);
+    expect(JSON.parse(await readFile(cacheFile, 'utf-8'))).toMatchObject({
+      authState: 'logged-out',
+      region: 'global',
+      source: 'local-signals',
+    });
+
+    signals = { timeZone: 'Asia/Shanghai', locale: 'zh-Hans-CN' };
+    expect(resolver.refresh()).toEqual({ region: 'global', source: 'local-signals' });
+    resolver = makeResolver();
+    expect(resolver.current()).toEqual({ region: 'global', source: 'local-signals' });
+    expect(collections).toBe(1);
+
+    auth = {
+      status: 'logged-in',
+      ref: { key: 'global', oauthHost: 'https://auth.kimi.ai' },
+    };
+    expect(resolver.refresh()).toEqual({ region: 'global', source: 'login' });
+    await expect(readFile(cacheFile, 'utf-8')).rejects.toThrow();
+    auth = { status: 'logged-in', ref: { key: KIMI_CODE_OAUTH_KEY } };
+    expect(resolver.refresh()).toEqual({ region: 'mainland-cn', source: 'login' });
+    auth = {
+      status: 'logged-in',
+      ref: { key: 'global', oauthHost: 'https://auth.kimi.ai' },
+    };
+    expect(resolver.refresh()).toEqual({ region: 'global', source: 'login' });
+    expect(collections).toBe(1);
+
+    auth = { status: 'logged-out' };
+    signals = {};
+    expect(resolver.refresh()).toEqual({ region: 'mainland-cn', source: 'fallback' });
+    await expect(readFile(cacheFile, 'utf-8')).rejects.toThrow();
+    signals = { timeZone: 'America/New_York', locale: 'en-US' };
+    expect(resolver.refresh()).toEqual({ region: 'mainland-cn', source: 'fallback' });
+    expect(collections).toBe(2);
+
+    resolver = makeResolver();
+    expect(resolver.current()).toEqual({ region: 'global', source: 'local-signals' });
+    expect(collections).toBe(3);
+    await writeFile(cacheFile, '{', 'utf-8');
+    signals = { timeZone: 'Asia/Shanghai', locale: 'zh-Hans-CN' };
+    resolver = makeResolver();
+    expect(resolver.current()).toEqual({ region: 'mainland-cn', source: 'local-signals' });
+    expect(collections).toBe(4);
+
+    resolver = createKimiRegionResolver({
+      env: {},
+      homeDir: dir,
+      readAuth: () => auth,
+      allowLocalInference: false,
+      collectSignals: () => {
+        collections += 1;
+        return signals;
+      },
+    });
+    expect(resolver.current()).toEqual({ region: 'mainland-cn', source: 'default' });
+    expect(collections).toBe(4);
   });
 
   it('skips the marker entirely when readMarker is false', async () => {

@@ -39,6 +39,7 @@ import type {
   TelemetryEvent,
   TelemetryProperties,
   TelemetryTransport,
+  TelemetryRegionResolution,
 } from '../src/types';
 
 const tempDirs: string[] = [];
@@ -78,9 +79,14 @@ class RecordingTransport implements TelemetryTransport {
   }
 }
 
-function makeSink(transport: TelemetryTransport, flushThreshold = 10): EventSink {
+function makeSink(
+  transport: TelemetryTransport,
+  flushThreshold = 10,
+  resolveRegion?: () => TelemetryRegionResolution,
+): EventSink {
   return new EventSink({
     transport,
+    resolveRegion,
     context: {
       appName: 'kimi-code-cli',
       version: '1.2.3',
@@ -489,7 +495,7 @@ describe('SystemMetricsCollector', () => {
 describe('EventSink', () => {
   it('enriches context without mutating the original event', () => {
     const transport = new RecordingTransport();
-    const sink = makeSink(transport);
+    const sink = makeSink(transport, 10, () => ({ region: 'global', source: 'local-signals' }));
     const event: TelemetryEvent = {
       event_id: 'e1',
       device_id: 'dev',
@@ -510,6 +516,8 @@ describe('EventSink', () => {
       ui_mode: 'shell',
       model: 'kimi-k2',
       terminal: 'test-terminal',
+      region: 'global',
+      region_source: 'local-signals',
     });
   });
 
@@ -709,6 +717,8 @@ describe('AsyncTransport', () => {
       homeDir,
       deviceId: 'dev',
       endpoint: () => endpoint,
+      endpointForRegion: (region) =>
+        region === 'global' ? 'https://global.test/events' : 'https://cn.test/events',
       fetchImpl: fetchImpl as unknown as typeof fetch,
       retryBackoffsMs: [],
     });
@@ -720,10 +730,26 @@ describe('AsyncTransport', () => {
     await transport.send([sampleEvent()]);
     expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://global.test/events');
 
+    endpoint = 'https://cn.test/events';
+    await transport.send([
+      { ...sampleEvent('deferred-global'), context: { region: 'global' } },
+      { ...sampleEvent('sendable-cn'), context: { region: 'mainland-cn' } },
+    ]);
+    expect(fetchImpl.mock.calls[2]?.[0]).toBe('https://cn.test/events');
+    const payload = JSON.parse(fetchImpl.mock.calls[2]?.[1]?.body as string) as {
+      events: Array<Record<string, unknown>>;
+    };
+    expect(payload.events.map((event) => event['event'])).toEqual(['kfc_sendable-cn']);
+    const deferred = readdirSync(join(homeDir, 'telemetry'));
+    expect(deferred).toHaveLength(1);
+    expect(readFileSync(join(homeDir, 'telemetry', deferred[0]!), 'utf-8')).toContain(
+      'deferred-global',
+    );
+
     endpoint = undefined;
     await transport.send([sampleEvent('dropped')]);
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(() => statSync(join(homeDir, 'telemetry'))).toThrow();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(readdirSync(join(homeDir, 'telemetry'))).toHaveLength(1);
   });
 
   it('retries anonymously on 401 with a token', async () => {
@@ -837,12 +863,20 @@ describe('AsyncTransport', () => {
     const telemetryDir = join(homeDir, 'telemetry');
     mkdirSync(telemetryDir, { recursive: true });
     const file = join(telemetryDir, 'failed_retry.jsonl');
-    writeFileSync(file, `${JSON.stringify(sampleEvent('from_disk'))}\n`);
+    writeFileSync(
+      file,
+      [
+        { ...sampleEvent('deferred-global'), context: { region: 'global' } },
+        { ...sampleEvent('from_disk'), context: { region: 'mainland-cn' } },
+      ].map((event) => JSON.stringify(event)).join('\n') + '\n',
+    );
     const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
     const transport = new AsyncTransport({
       homeDir,
       deviceId: 'dev',
       endpoint: 'https://mock.test/events',
+      endpointForRegion: (region) =>
+        region === 'global' ? 'https://global.test/events' : 'https://mock.test/events',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
@@ -850,8 +884,11 @@ describe('AsyncTransport', () => {
 
     const init = requestInitFrom(fetchImpl);
     const payload = JSON.parse(init.body as string) as { events: Array<{ event: string }> };
-    expect(payload.events[0]?.['event']).toBe('kfc_from_disk');
+    expect(payload.events.map((event) => event.event)).toEqual(['kfc_from_disk']);
     expect(() => statSync(file)).toThrow();
+    const remaining = readdirSync(telemetryDir);
+    expect(remaining).toHaveLength(1);
+    expect(readFileSync(join(telemetryDir, remaining[0]!), 'utf-8')).toContain('deferred-global');
   });
 
   it('removes expired and corrupted disk files', async () => {

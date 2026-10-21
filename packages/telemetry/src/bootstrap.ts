@@ -2,6 +2,7 @@ import { getDefaultTelemetryClient } from './client';
 import { EventSink } from './sink';
 import { SystemMetricsCollector } from './systemMetrics';
 import { AsyncTransport } from './transport';
+import type { TelemetryRegion, TelemetryRegionResolution } from './types';
 
 export const TELEMETRY_DISABLE_ENV = 'KIMI_DISABLE_TELEMETRY';
 
@@ -20,6 +21,10 @@ export interface TelemetryBootstrapOptions {
   readonly buildSha?: string;
   readonly terminal?: string;
   readonly locale?: string;
+  readonly region?: TelemetryRegion;
+  readonly regionSource?: string;
+  readonly resolveRegion?: () => TelemetryRegionResolution;
+  readonly endpointForRegion?: (region: TelemetryRegion) => string | undefined;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   /**
    * Invoked when a tracked property is dropped for not being a primitive.
@@ -65,10 +70,12 @@ export function initializeTelemetry(options: TelemetryBootstrapOptions): void {
     homeDir: options.homeDir,
     deviceId: options.deviceId,
     endpoint: options.endpoint,
+    endpointForRegion: options.endpointForRegion,
     getAccessToken: options.getAccessToken,
   });
   const sink = new EventSink({
     transport,
+    resolveRegion: options.resolveRegion,
     context: {
       appName: options.appName,
       version: options.version,
@@ -77,6 +84,8 @@ export function initializeTelemetry(options: TelemetryBootstrapOptions): void {
       buildSha: options.buildSha,
       terminal: options.terminal,
       locale: options.locale,
+      region: options.region,
+      regionSource: options.regionSource,
     },
   });
 

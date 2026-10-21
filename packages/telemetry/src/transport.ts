@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-import type { EnrichedTelemetryEvent, TelemetryPrimitive } from './types';
+import type { EnrichedTelemetryEvent, TelemetryPrimitive, TelemetryRegion } from './types';
 import { isTelemetryPrimitive } from './types';
 
 export const SERVER_EVENT_PREFIX = 'kfc_';
@@ -24,6 +24,7 @@ export interface AsyncTransportOptions {
   /** Static endpoint, or a resolver invoked per flush so an in-process region
       switch (login/logout) takes effect without rebuilding the transport. */
   readonly endpoint?: string | (() => string | undefined);
+  readonly endpointForRegion?: (region: TelemetryRegion) => string | undefined;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
   readonly fetchImpl?: typeof fetch;
   readonly retryBackoffsMs?: readonly number[];
@@ -43,6 +44,7 @@ export class AsyncTransport {
   private readonly homeDir: string;
   private readonly deviceId: string;
   private readonly endpoint: string | (() => string | undefined) | undefined;
+  private readonly endpointForRegion: ((region: TelemetryRegion) => string | undefined) | undefined;
   private readonly getAccessToken: (() => string | null | Promise<string | null>) | null;
   private readonly fetchImpl: typeof fetch;
   private readonly retryBackoffsMs: readonly number[];
@@ -54,6 +56,7 @@ export class AsyncTransport {
     this.homeDir = options.homeDir;
     this.deviceId = options.deviceId;
     this.endpoint = options.endpoint;
+    this.endpointForRegion = options.endpointForRegion;
     this.getAccessToken = options.getAccessToken ?? null;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.retryBackoffsMs = options.retryBackoffsMs ?? RETRY_BACKOFFS_MS;
@@ -69,7 +72,18 @@ export class AsyncTransport {
   }
 
   async send(events: readonly EnrichedTelemetryEvent[], signal?: AbortSignal): Promise<void> {
-    if (events.length === 0 || this.resolvedEndpoint() === undefined) return;
+    if (events.length === 0) return;
+    const endpoint = this.resolvedEndpoint();
+    if (this.endpointForRegion !== undefined) {
+      const partition = partitionEvents(events, endpoint, this.endpointForRegion, false);
+      if (partition.deferred.length > 0) {
+        try {
+          this.saveToDisk(partition.deferred);
+        } catch {}
+      }
+      events = partition.sendable;
+    }
+    if (events.length === 0 || endpoint === undefined) return;
     let savedToDisk = false;
     const saveEventsToDisk = (): void => {
       if (savedToDisk) return;
@@ -91,7 +105,7 @@ export class AsyncTransport {
     try {
       for (let attempt = 0; attempt <= this.retryBackoffsMs.length; attempt++) {
         try {
-          await this.sendHttp(payload, signal);
+          await this.sendHttp(payload, signal, endpoint);
           return;
         } catch (error) {
           if (isSignalAborted(signal) || isAbortError(error)) {
@@ -129,7 +143,7 @@ export class AsyncTransport {
   }
 
   async retryDiskEvents(): Promise<void> {
-    if (this.resolvedEndpoint() === undefined) return;
+    const endpoint = this.resolvedEndpoint();
     let entries: string[];
     try {
       entries = readdirSync(this.telemetryDir());
@@ -152,9 +166,33 @@ export class AsyncTransport {
       }
 
       let events: EnrichedTelemetryEvent[];
-      let payload: TelemetryPayload;
       try {
         events = readJsonl(path);
+      } catch (error) {
+        if (error instanceof SyntaxError || error instanceof TypeError) {
+          try {
+            unlinkSync(path);
+          } catch {
+            // best effort cleanup.
+          }
+        }
+        continue;
+      }
+
+      let deferred: EnrichedTelemetryEvent[] = [];
+      if (this.endpointForRegion !== undefined) {
+        const partition = partitionEvents(events, endpoint, this.endpointForRegion, true);
+        events = partition.sendable;
+        deferred = partition.deferred;
+        if (events.length === 0) {
+          if (deferred.length === 0) unlinkSync(path);
+          continue;
+        }
+      }
+      if (endpoint === undefined) continue;
+
+      let payload: TelemetryPayload;
+      try {
         payload = buildPayload(events, this.deviceId);
       } catch (error) {
         if (error instanceof SyntaxError || error instanceof TypeError) {
@@ -168,7 +206,8 @@ export class AsyncTransport {
       }
 
       try {
-        await this.sendHttp(payload);
+        await this.sendHttp(payload, undefined, endpoint);
+        if (deferred.length > 0) this.saveToDisk(deferred);
         unlinkSync(path);
       } catch (error) {
         if (error instanceof TransientTelemetryError) continue;
@@ -176,7 +215,11 @@ export class AsyncTransport {
     }
   }
 
-  private async sendHttp(payload: TelemetryPayload, signal?: AbortSignal): Promise<void> {
+  private async sendHttp(
+    payload: TelemetryPayload,
+    signal: AbortSignal | undefined,
+    endpoint: string,
+  ): Promise<void> {
     const token = this.getAccessToken === null ? null : await this.getAccessToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -185,10 +228,10 @@ export class AsyncTransport {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const response = await this.post(payload, headers, signal);
+    const response = await this.post(payload, headers, signal, endpoint);
     if (response.status === 401 && headers['Authorization'] !== undefined) {
       delete headers['Authorization'];
-      const retry = await this.post(payload, headers, signal);
+      const retry = await this.post(payload, headers, signal, endpoint);
       handleStatus(retry.status);
       return;
     }
@@ -198,13 +241,10 @@ export class AsyncTransport {
   private async post(
     payload: TelemetryPayload,
     headers: Record<string, string>,
-    signal?: AbortSignal,
+    signal: AbortSignal | undefined,
+    endpoint: string,
   ): Promise<Response> {
     try {
-      const endpoint = this.resolvedEndpoint();
-      if (endpoint === undefined) {
-        throw new TransientTelemetryError('telemetry endpoint is disabled');
-      }
       return await fetchWithTimeout(
         this.fetchImpl,
         endpoint,
@@ -232,6 +272,34 @@ export class AsyncTransport {
     }
     return path;
   }
+}
+
+interface EventPartition {
+  readonly sendable: EnrichedTelemetryEvent[];
+  readonly deferred: EnrichedTelemetryEvent[];
+}
+
+function partitionEvents(
+  events: readonly EnrichedTelemetryEvent[],
+  endpoint: string | undefined,
+  endpointForRegion: (region: TelemetryRegion) => string | undefined,
+  deferRegionless: boolean,
+): EventPartition {
+  const sendable: EnrichedTelemetryEvent[] = [];
+  const deferred: EnrichedTelemetryEvent[] = [];
+  for (const event of events) {
+    const region = event.context['region'];
+    if (region !== 'mainland-cn' && region !== 'global') {
+      if (endpoint !== undefined) sendable.push(event);
+      else if (deferRegionless) deferred.push(event);
+      continue;
+    }
+    const expected = endpointForRegion(region);
+    if (expected === undefined) continue;
+    if (endpoint !== undefined && expected === endpoint) sendable.push(event);
+    else deferred.push(event);
+  }
+  return { sendable, deferred };
 }
 
 export class TransientTelemetryError extends Error {

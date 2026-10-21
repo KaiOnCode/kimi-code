@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resolveKimiRegionDetailed } from '@moonshot-ai/kimi-code-oauth';
 
 import {
   resetUnexpectedErrorHandler,
@@ -48,12 +49,19 @@ function baseOptions(
   overrides: Partial<CloudAppenderOptions> & { homeDir?: string; bootstrapEnv?: NodeJS.ProcessEnv } = {},
 ): CloudAppenderOptions {
   const { homeDir: dir = '', storage, bootstrapEnv, ...rest } = overrides;
+  const env = { ...process.env, ...bootstrapEnv };
   return {
     storage: storage ?? new FileStorageService(dir),
     bootstrap: {
       ...stubBootstrap(dir === '' ? undefined : dir, bootstrapEnv),
       clientIdentity: { ...stubClientIdentity, version: '1.0.0' },
     },
+    resolveRegion: () =>
+      resolveKimiRegionDetailed({
+        env,
+        homeDir: dir === '' ? undefined : dir,
+        readMarker: env['KIMI_CODE_REGION_MARKER'] !== 'off',
+      }),
     deviceId: 'dev',
     appName: 'test-app',
     sleep: async () => {},
